@@ -1,0 +1,7 @@
+---
+alwaysApply: true
+---
+
+- Respond and explain strictly in Simplified Chinese.
+- ALL code comments and docstrings MUST be in English.
+- Add concise comments focusing on complex algorithmic logic or the "why"; omit obvious syntax explanations.

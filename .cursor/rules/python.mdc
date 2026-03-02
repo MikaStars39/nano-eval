@@ -1,0 +1,11 @@
+---
+description: "Python Code"
+globs: "*.py"
+alwaysApply: false
+---
+
+- Follow PEP 8. Assume code is formatted by Ruff/Black.
+- Enforce strict type hinting for all function signatures and complex variables.
+- Favor vectorized operations (e.g., NumPy/PyTorch) over standard Python loops for numerical or tensor processing.
+- Use explicit, domain-specific variable names (e.g., `logits`, `weights`, `trajectory`) rather than generic letters, except for standard iterators (`i`, `j`).
+- Keep functions pure, modular, and stateless where possible to ensure testability.
