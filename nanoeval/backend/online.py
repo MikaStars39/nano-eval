@@ -27,6 +27,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("OnlineInference")
 
+
+def _extract_message_content_and_reasoning(response: Dict[str, Any]) -> tuple[str, Optional[str]]:
+    choices = response.get("choices") or []
+    if not choices:
+        return "", None
+    message = choices[0].get("message") or {}
+    content = message.get("content") or ""
+    reasoning = message.get("reasoning")
+    if reasoning is None:
+        reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str):
+        reasoning = reasoning.strip()
+    if not reasoning:
+        reasoning = None
+    return str(content), reasoning
+
 @dataclass
 class APIConfig:
     """
@@ -153,7 +169,11 @@ class OnlineBatchInferenceEngine:
                     response = await client.post_request(payload)
                     
                     # 5. Result Formatting
-                    item["response"] = response["choices"][0]["message"]["content"]
+                    content, reasoning = _extract_message_content_and_reasoning(response)
+                    item["response"] = content
+                    if reasoning:
+                        # Preserve model reasoning traces when backend provides them.
+                        item["thinking"] = reasoning
                     item["usage"] = response.get("usage", {})
                     item["_latency"] = round(time.perf_counter() - start_t, 3)
                     item["_status"] = "success"

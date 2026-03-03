@@ -65,7 +65,7 @@ def gpqa_judge(
             "pass": True
         }
     else:
-        if label in pred_ans:
+        if label.lower() in pred_ans.lower():
             return {
                 "pred": pred_ans,
                 "pass": True

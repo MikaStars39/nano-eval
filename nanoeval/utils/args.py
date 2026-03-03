@@ -6,6 +6,16 @@ from typing import Dict, List, Sequence, Tuple
 
 from .task import discover_task_names, resolve_task_file
 
+def _parse_optional_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(
+        f"Invalid boolean value for --enable-thinking: {value}. Use true/false."
+    )
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="NanoEval pipeline: step01 prepare inputs, step02 inference."
@@ -89,7 +99,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--backend",
         type=str,
-        choices=["mock", "offline", "online"],
+        choices=["mock", "offline", "online", "online_ray"],
         default="mock",
         help="Inference backend for step02.",
     )
@@ -98,6 +108,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Local model path for offline backend.",
+    )
+    parser.add_argument(
+        "--tp-size",
+        type=int,
+        default=1,
+        help="Tensor parallel size for offline backend.",
+    )
+    parser.add_argument(
+        "--dp-size",
+        type=int,
+        default=1,
+        help="Data parallel size for offline backend.",
     )
     parser.add_argument(
         "--chat-template-model-path",
@@ -136,6 +158,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Online backend concurrency.",
     )
     parser.add_argument(
+        "--ray-num-actors",
+        type=int,
+        default=None,
+        help="Optional actor count for online_ray backend. If unset, derived from --concurrency.",
+    )
+    parser.add_argument(
+        "--ray-worker-concurrency",
+        type=int,
+        default=None,
+        help="Optional per-actor async concurrency for online_ray backend. If unset, derived from --concurrency.",
+    )
+    parser.add_argument(
+        "--online-request-timeout-s",
+        type=float,
+        default=120.0,
+        help="Per-request timeout seconds for online/online_ray backend network calls.",
+    )
+    parser.add_argument(
+        "--online-stall-log-interval-s",
+        type=float,
+        default=15.0,
+        help="Heartbeat interval seconds when online_ray has no completed chunks.",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=0.7,
@@ -146,6 +192,47 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=1024,
         help="Sampling max tokens for inference.",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        default=None,
+        help="Optional nucleus sampling top-p for inference.",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help="Optional top-k sampling value for inference.",
+    )
+    parser.add_argument(
+        "--min-p",
+        type=float,
+        default=None,
+        help="Optional minimum probability threshold for sampling.",
+    )
+    parser.add_argument(
+        "--presence-penalty",
+        type=float,
+        default=None,
+        help="Optional presence penalty for token generation.",
+    )
+    parser.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=None,
+        help="Optional repetition penalty for token generation.",
+    )
+    parser.add_argument(
+        "--enable-thinking",
+        nargs="?",
+        const=True,
+        default=None,
+        type=_parse_optional_bool,
+        help=(
+            "Set chat template thinking for online-style backends when supported. "
+            "Use --enable-thinking (true), or --enable-thinking false."
+        ),
     )
     return parser
 

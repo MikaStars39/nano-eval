@@ -60,12 +60,18 @@ def run_inference(
     output_file: Path,
     sampling_params: Optional[Dict[str, Any]] = None,
     model_path: Optional[str] = None,
+    tp_size: int = 1,
+    dp_size: int = 1,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
     concurrency: int = 32,
+    ray_num_actors: Optional[int] = None,
+    ray_worker_concurrency: Optional[int] = None,
+    online_request_timeout_s: float = 120.0,
+    online_stall_log_interval_s: float = 15.0,
 ) -> Dict[str, Any]:
-    backend_name = backend.strip().lower()
+    backend_name = backend.strip().lower().replace("-", "_")
     params = sampling_params or {}
 
     if backend_name == "mock":
@@ -82,7 +88,11 @@ def run_inference(
             offline_params["max_new_tokens"] = offline_params.pop("max_tokens")
 
         async def _run_offline() -> None:
-            async with BatchInferenceEngine(model_path=model_path) as engine:
+            async with BatchInferenceEngine(
+                model_path=model_path,
+                tp_size=max(1, int(tp_size)),
+                dp_size=max(1, int(dp_size)),
+            ) as engine:
                 await engine.run(
                     input_file=str(input_file),
                     output_file=str(output_file),
@@ -120,6 +130,51 @@ def run_inference(
             "backend": "online",
             "input_path": str(input_file),
             "output_path": str(output_file),
+        }
+
+    if backend_name == "online_ray":
+        if not api_key or not base_url or not model:
+            raise ValueError("api_key, base_url and model are required when backend=online_ray")
+        from .online_ray import APIConfig, OnlineRayBatchInferenceEngine
+        actor_count = (
+            max(1, int(ray_num_actors))
+            if ray_num_actors is not None
+            else max(1, int(concurrency) // 8)
+        )
+        worker_concurrency = (
+            max(1, int(ray_worker_concurrency))
+            if ray_worker_concurrency is not None
+            else max(1, int(concurrency) // actor_count)
+        )
+
+        async def _run_online_ray() -> None:
+            config = APIConfig(
+                api_key=api_key,
+                base_url=base_url.rstrip("/"),
+                model=model,
+            )
+            engine = OnlineRayBatchInferenceEngine(
+                config,
+                num_actors=actor_count,
+                worker_concurrency=worker_concurrency,
+                request_timeout_s=online_request_timeout_s,
+                stall_log_interval_s=online_stall_log_interval_s,
+            )
+            await engine.run(
+                input_file=str(input_file),
+                output_file=str(output_file),
+                sampling_params=params,
+            )
+
+        asyncio.run(_run_online_ray())
+        return {
+            "backend": "online_ray",
+            "input_path": str(input_file),
+            "output_path": str(output_file),
+            "ray_num_actors": actor_count,
+            "ray_worker_concurrency": worker_concurrency,
+            "online_request_timeout_s": online_request_timeout_s,
+            "online_stall_log_interval_s": online_stall_log_interval_s,
         }
 
     raise ValueError(f"Unsupported backend: {backend}")
