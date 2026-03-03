@@ -30,10 +30,10 @@ class TestRewardScore(unittest.TestCase):
             _write_jsonl(
                 eval_input,
                 [
-                    {"source": "aime2024", "question_id": "q1", "response": "ok", "label": "x"},
+                    {"source": "aime2024", "question_id": "q1", "response": "ok", "thinking": "plan now", "label": "x"},
                     {"source": "aime2024", "question_id": "q1", "response": "bad", "label": "x"},
-                    {"source": "aime2024", "question_id": "q2", "response": "bad", "label": "x"},
-                    {"source": "aime2025", "question_id": "q3", "response": "ok", "label": "x"},
+                    {"source": "aime2024", "question_id": "q2", "response": "bad", "thinking": "deep think.", "label": "x"},
+                    {"source": "aime2025", "question_id": "q3", "response": "ok", "thinking": "h", "label": "x"},
                 ],
             )
 
@@ -55,6 +55,18 @@ class TestRewardScore(unittest.TestCase):
             self.assertAlmostEqual(metrics["aime2025"]["pass_k"], 1.0)
             self.assertAlmostEqual(metrics["overall"]["avg_k"], 0.5)
             self.assertAlmostEqual(metrics["overall"]["pass_k"], 2 / 3)
+            self.assertAlmostEqual(metrics["aime2024"]["avg_total_tokens"], 8 / 3)
+            self.assertAlmostEqual(metrics["aime2024"]["avg_thinking_tokens"], 5 / 3)
+            self.assertAlmostEqual(metrics["aime2024"]["max_thinking_tokens"], 3.0)
+            self.assertAlmostEqual(metrics["aime2024"]["min_thinking_tokens"], 0.0)
+            self.assertAlmostEqual(metrics["aime2025"]["avg_total_tokens"], 2.0)
+            self.assertAlmostEqual(metrics["aime2025"]["avg_thinking_tokens"], 1.0)
+            self.assertAlmostEqual(metrics["aime2025"]["max_thinking_tokens"], 1.0)
+            self.assertAlmostEqual(metrics["aime2025"]["min_thinking_tokens"], 1.0)
+            self.assertAlmostEqual(metrics["overall"]["avg_total_tokens"], 2.5)
+            self.assertAlmostEqual(metrics["overall"]["avg_thinking_tokens"], 1.5)
+            self.assertAlmostEqual(metrics["overall"]["max_thinking_tokens"], 3.0)
+            self.assertAlmostEqual(metrics["overall"]["min_thinking_tokens"], 0.0)
 
             with score_output.open("r", encoding="utf-8") as file_obj:
                 scored_rows = [json.loads(line) for line in file_obj if line.strip()]
@@ -66,6 +78,11 @@ class TestRewardScore(unittest.TestCase):
                 csv_rows = list(csv.DictReader(file_obj))
             self.assertTrue(any(row["task"] == "aime2024" for row in csv_rows))
             self.assertTrue(any(row["task"] == "overall" for row in csv_rows))
+            aime2024_row = next(row for row in csv_rows if row["task"] == "aime2024")
+            self.assertAlmostEqual(float(aime2024_row["avg_total_tokens"]), 8 / 3)
+            self.assertAlmostEqual(float(aime2024_row["avg_thinking_tokens"]), 5 / 3)
+            self.assertAlmostEqual(float(aime2024_row["max_thinking_tokens"]), 3.0)
+            self.assertAlmostEqual(float(aime2024_row["min_thinking_tokens"]), 0.0)
 
     def test_judge_router_routes_to_expected_branches(self) -> None:
         fake_ifeval_module = types.ModuleType("nanoeval.reward.if_eval.if_eval")

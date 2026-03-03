@@ -66,9 +66,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         for field_name, field_value in optional_sampling_fields:
             if field_value is not None:
                 sampling_params[field_name] = field_value
-        if args.enable_thinking:
+        if args.enable_thinking is not None:
             if args.backend in {"online", "online_ray"}:
-                sampling_params["chat_template_kwargs"] = {"enable_thinking": True}
+                sampling_params["chat_template_kwargs"] = {
+                    "enable_thinking": args.enable_thinking
+                }
             else:
                 logging.info(
                     "--enable-thinking is ignored for backend=%s. "

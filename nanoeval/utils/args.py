@@ -6,6 +6,16 @@ from typing import Dict, List, Sequence, Tuple
 
 from .task import discover_task_names, resolve_task_file
 
+def _parse_optional_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(
+        f"Invalid boolean value for --enable-thinking: {value}. Use true/false."
+    )
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="NanoEval pipeline: step01 prepare inputs, step02 inference."
@@ -215,8 +225,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--enable-thinking",
-        action="store_true",
-        help="Enable chat template thinking for online-style backends when supported.",
+        nargs="?",
+        const=True,
+        default=None,
+        type=_parse_optional_bool,
+        help=(
+            "Set chat template thinking for online-style backends when supported. "
+            "Use --enable-thinking (true), or --enable-thinking false."
+        ),
     )
     return parser
 

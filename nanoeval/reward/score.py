@@ -1,11 +1,14 @@
 import json
 import logging
 import csv
+import re
 from typing import Dict, List
 from pathlib import Path
 from multiprocessing import Pool
 
 from .reward import judge_router
+
+_TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", flags=re.UNICODE)
 
 def instance_judge(
     instance: Dict
@@ -42,10 +45,61 @@ def _build_task_question_scores(items: List[Dict]) -> Dict[str, Dict[str, List[f
     return grouped_scores
 
 
+def _count_text_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return len(_TOKEN_PATTERN.findall(text))
+
+
+def _extract_answer_tokens(item: Dict) -> int:
+    usage = item.get("usage", {})
+    if isinstance(usage, dict):
+        completion_tokens = usage.get("completion_tokens")
+        if completion_tokens is None:
+            completion_tokens = usage.get("output_tokens")
+        if isinstance(completion_tokens, (int, float)) and completion_tokens >= 0:
+            return int(completion_tokens)
+    response_text = str(item.get("response", "") or "")
+    thinking_text = str(item.get("thinking", "") or "")
+    return _count_text_tokens(response_text) + _count_text_tokens(thinking_text)
+
+
+def _compute_length_metrics(items: List[Dict]) -> Dict[str, float]:
+    total_token_lengths: List[int] = []
+    thinking_token_lengths: List[int] = []
+    for item in items:
+        thinking_text = str(item.get("thinking", "") or "")
+        response_tokens = _extract_answer_tokens(item)
+        thinking_tokens = _count_text_tokens(thinking_text)
+        total_token_lengths.append(response_tokens)
+        thinking_token_lengths.append(thinking_tokens)
+
+    if not total_token_lengths:
+        return {
+            "avg_total_tokens": 0.0,
+            "avg_thinking_tokens": 0.0,
+            "max_thinking_tokens": 0.0,
+            "min_thinking_tokens": 0.0,
+        }
+
+    return {
+        "avg_total_tokens": sum(total_token_lengths) / len(total_token_lengths),
+        "avg_thinking_tokens": sum(thinking_token_lengths) / len(thinking_token_lengths),
+        "max_thinking_tokens": float(max(thinking_token_lengths)),
+        "min_thinking_tokens": float(min(thinking_token_lengths)),
+    }
+
+
 def _calculate_metrics(
-    grouped_scores: Dict[str, Dict[str, List[float]]]
+    grouped_scores: Dict[str, Dict[str, List[float]]],
+    items: List[Dict],
 ) -> Dict[str, Dict[str, float]]:
     final_results = {}
+    items_by_source: Dict[str, List[Dict]] = {}
+    for item in items:
+        ds_name = item.get("source", "unknown")
+        items_by_source.setdefault(ds_name, []).append(item)
+
     for ds_name, q_map in grouped_scores.items():
         all_scores = []
         pass_at_k_scores = []
@@ -56,8 +110,9 @@ def _calculate_metrics(
 
         final_results[ds_name] = {
             "avg_k": sum(all_scores) / len(all_scores) if all_scores else 0,
-            "pass_k": sum(pass_at_k_scores) / len(pass_at_k_scores) if pass_at_k_scores else 0
+            "pass_k": sum(pass_at_k_scores) / len(pass_at_k_scores) if pass_at_k_scores else 0,
         }
+        final_results[ds_name].update(_compute_length_metrics(items_by_source.get(ds_name, [])))
 
     # Overall metrics across all datasets
     overall_all_scores = []
@@ -71,6 +126,7 @@ def _calculate_metrics(
         "avg_k": sum(overall_all_scores) / len(overall_all_scores) if overall_all_scores else 0,
         "pass_k": sum(overall_pass_at_k_scores) / len(overall_pass_at_k_scores) if overall_pass_at_k_scores else 0,
     }
+    final_results["overall"].update(_compute_length_metrics(items))
 
     return final_results
 
@@ -125,7 +181,7 @@ def eval_results(
     logging.info(f"Saved score results to {score_output_file}")
 
     # ------------------ calculate the metrics and return ------------------ 
-    metrics = _calculate_metrics(grouped_scores)
+    metrics = _calculate_metrics(grouped_scores, items)
     final_eval_output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(final_eval_output_file, "w", encoding="utf-8") as f:
         for ds_name, ds_metrics in metrics.items():
@@ -135,7 +191,18 @@ def eval_results(
     if final_eval_csv_output_file is not None:
         final_eval_csv_output_file.parent.mkdir(parents=True, exist_ok=True)
         with open(final_eval_csv_output_file, "w", encoding="utf-8", newline="") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=["task", "avg_k", "pass_k"])
+            writer = csv.DictWriter(
+                csv_file,
+                fieldnames=[
+                    "task",
+                    "avg_k",
+                    "pass_k",
+                    "avg_total_tokens",
+                    "avg_thinking_tokens",
+                    "max_thinking_tokens",
+                    "min_thinking_tokens",
+                ],
+            )
             writer.writeheader()
             for task_name, task_metrics in metrics.items():
                 writer.writerow(
@@ -143,6 +210,10 @@ def eval_results(
                         "task": task_name,
                         "avg_k": task_metrics.get("avg_k", 0),
                         "pass_k": task_metrics.get("pass_k", 0),
+                        "avg_total_tokens": task_metrics.get("avg_total_tokens", 0),
+                        "avg_thinking_tokens": task_metrics.get("avg_thinking_tokens", 0),
+                        "max_thinking_tokens": task_metrics.get("max_thinking_tokens", 0),
+                        "min_thinking_tokens": task_metrics.get("min_thinking_tokens", 0),
                     }
                 )
         logging.info(f"Saved final metrics csv to {final_eval_csv_output_file}")
