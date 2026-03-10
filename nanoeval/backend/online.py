@@ -43,6 +43,18 @@ def _extract_message_content_and_reasoning(response: Dict[str, Any]) -> tuple[st
         reasoning = None
     return str(content), reasoning
 
+
+def _build_request_messages(item: Dict[str, Any], system_prompt: str = "") -> List[Dict[str, str]]:
+    raw_messages = item.get("messages")
+    if isinstance(raw_messages, list) and raw_messages:
+        return raw_messages
+    prompt_text = str(item.get("prompt", ""))
+    messages: List[Dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_text})
+    return messages
+
 @dataclass
 class APIConfig:
     """
@@ -145,7 +157,13 @@ class OnlineBatchInferenceEngine:
                 start_t = time.perf_counter()
                 try:
                     # 1. Construct Base Payload
-                    messages = item.get("messages", [{"role": "user", "content": item.get("prompt", "")}])
+                    system_prompt = str(sampling_params.get("__system_prompt", "") or "")
+                    messages = _build_request_messages(item, system_prompt=system_prompt)
+                    effective_sampling_params = {
+                        key: value
+                        for key, value in sampling_params.items()
+                        if key != "__system_prompt"
+                    }
                     
                     payload = {
                         "model": self.api_config.model,
@@ -154,7 +172,7 @@ class OnlineBatchInferenceEngine:
 
                     # 2. Apply Global Sampling Params (Unified Management)
                     # This ensures consistency with offline engine behavior
-                    payload.update(sampling_params)
+                    payload.update(effective_sampling_params)
 
                     # 3. Apply Per-Request Overrides (Optional)
                     # If the input line has 'temperature', it overrides the global setting

@@ -224,6 +224,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional repetition penalty for token generation.",
     )
     parser.add_argument(
+        "--reasoning-effort",
+        type=str,
+        choices=["low", "medium", "high"],
+        default=None,
+        help="Optional reasoning effort level for models/APIs that support it.",
+    )
+    parser.add_argument(
         "--enable-thinking",
         nargs="?",
         const=True,

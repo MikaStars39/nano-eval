@@ -84,6 +84,53 @@ class TestRewardScore(unittest.TestCase):
             self.assertAlmostEqual(float(aime2024_row["max_thinking_tokens"]), 3.0)
             self.assertAlmostEqual(float(aime2024_row["min_thinking_tokens"]), 0.0)
 
+    def test_eval_results_strips_thinking_from_response_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            eval_input = tmp_path / "eval_input.jsonl"
+            score_output = tmp_path / "score_output.jsonl"
+            metrics_output = tmp_path / "final_metrics.jsonl"
+            metrics_csv_output = tmp_path / "final_metrics.csv"
+            _write_jsonl(
+                eval_input,
+                [
+                    {
+                        "source": "ifeval",
+                        "question_id": "q1",
+                        "response": (
+                            "Thinking Process:\n"
+                            "I should ensure the format is strict.\n\n"
+                            "Final answer: My answer is no."
+                        ),
+                        "instruction_id_list": ["detectable_format:constrained_response"],
+                        "kwargs": [{}],
+                        "label": "",
+                    }
+                ],
+            )
+
+            def _fake_judge_router(response: str, label: str = "", source: str | None = None, **kwargs: object) -> dict:
+                return {"pass": response == "My answer is no.", "pred": response}
+
+            with patch("nanoeval.reward.score.judge_router", side_effect=_fake_judge_router):
+                metrics = eval_results(
+                    eval_output_file=eval_input,
+                    score_output_file=score_output,
+                    final_eval_output_file=metrics_output,
+                    final_eval_csv_output_file=metrics_csv_output,
+                    n_proc=1,
+                )
+
+            self.assertAlmostEqual(metrics["ifeval"]["avg_k"], 1.0)
+            self.assertGreater(metrics["ifeval"]["avg_thinking_tokens"], 0.0)
+
+            with score_output.open("r", encoding="utf-8") as file_obj:
+                scored_rows = [json.loads(line) for line in file_obj if line.strip()]
+            self.assertEqual(len(scored_rows), 1)
+            self.assertEqual(scored_rows[0]["response"], "My answer is no.")
+            self.assertIn("Thinking Process", scored_rows[0].get("thinking", ""))
+            self.assertTrue(scored_rows[0]["pass"])
+
     def test_judge_router_routes_to_expected_branches(self) -> None:
         fake_ifeval_module = types.ModuleType("nanoeval.reward.if_eval.if_eval")
         fake_ifeval_module.if_judge = lambda response, **kwargs: {"pass": True, "pred": "ifeval"}

@@ -62,10 +62,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             ("min_p", args.min_p),
             ("presence_penalty", args.presence_penalty),
             ("repetition_penalty", args.repetition_penalty),
+            ("reasoning_effort", args.reasoning_effort),
         )
         for field_name, field_value in optional_sampling_fields:
             if field_value is not None:
                 sampling_params[field_name] = field_value
+        if args.system_prompt and args.backend in {"online", "online_ray"}:
+            sampling_params["__system_prompt"] = args.system_prompt
         if args.enable_thinking is not None:
             if args.backend in {"online", "online_ray"}:
                 sampling_params["chat_template_kwargs"] = {

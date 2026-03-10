@@ -9,12 +9,26 @@ from multiprocessing import Pool
 from .reward import judge_router
 
 _TOKEN_PATTERN = re.compile(r"\w+|[^\w\s]", flags=re.UNICODE)
+_THINK_BLOCK_PATTERN = re.compile(r"<think>(.*?)</think>", flags=re.IGNORECASE | re.DOTALL)
+_FINAL_ANSWER_PATTERN = re.compile(r"\b(final\s+answer|answer)\s*[:：]\s*", flags=re.IGNORECASE)
 
 def instance_judge(
     instance: Dict
 ) -> Dict:
     # ------------------ get the instance information ------------------
-    response = instance.get("response", "")
+    response = str(instance.get("response", "") or "")
+    response, extracted_thinking = _split_response_and_thinking(
+        response=response,
+        existing_thinking=instance.get("thinking"),
+    )
+    if extracted_thinking:
+        existing_thinking = str(instance.get("thinking", "") or "").strip()
+        if existing_thinking:
+            if extracted_thinking not in existing_thinking:
+                instance["thinking"] = f"{existing_thinking}\n\n{extracted_thinking}"
+        else:
+            instance["thinking"] = extracted_thinking
+    instance["response"] = response
     label = instance.get("label", "")
     source = instance.get("source", None)
     
@@ -33,6 +47,57 @@ def instance_judge(
     # ------------------ update the instance ------------------
     instance.update(judge_res)
     return instance
+
+
+def _split_response_and_thinking(response: str, existing_thinking: object = None) -> tuple[str, str]:
+    text = str(response or "").strip()
+    if not text:
+        return "", ""
+
+    extracted_segments: List[str] = []
+
+    think_blocks = _THINK_BLOCK_PATTERN.findall(text)
+    if think_blocks:
+        extracted_segments.extend([block.strip() for block in think_blocks if block.strip()])
+        text = _THINK_BLOCK_PATTERN.sub("", text).strip()
+
+    if isinstance(existing_thinking, str):
+        prefix = existing_thinking.strip()
+        if prefix and text.startswith(prefix):
+            text = text[len(prefix):].lstrip()
+
+    final_match = None
+    for match in _FINAL_ANSWER_PATTERN.finditer(text):
+        final_match = match
+    if final_match is not None:
+        prefix_part = text[:final_match.start()].strip()
+        suffix_part = text[final_match.end():].strip()
+        if prefix_part:
+            extracted_segments.append(prefix_part)
+        if suffix_part:
+            text = suffix_part
+
+    if not think_blocks and final_match is None:
+        blocks = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
+        if len(blocks) >= 2:
+            maybe_thinking = blocks[:-1]
+            # Heuristic: only split when there are clear reasoning markers.
+            joined_prefix = " ".join(maybe_thinking).lower()
+            reasoning_markers = (
+                "thinking process",
+                "reasoning process",
+                "let me think",
+                "hmm",
+                "i should",
+                "step 1",
+                "analysis",
+            )
+            if any(marker in joined_prefix for marker in reasoning_markers):
+                extracted_segments.extend(maybe_thinking)
+                text = blocks[-1]
+
+    extracted_thinking = "\n\n".join(seg for seg in extracted_segments if seg).strip()
+    return text.strip(), extracted_thinking
 
 
 def _build_task_question_scores(items: List[Dict]) -> Dict[str, Dict[str, List[float]]]:

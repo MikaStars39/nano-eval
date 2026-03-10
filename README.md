@@ -3,13 +3,13 @@
   <br />
   <br />
 
-[![][github-release-shield]][github-release-link]
+<!-- [![][github-release-shield]][github-release-link]
 [![][github-releasedate-shield]][github-releasedate-link]
 [![][github-contributors-shield]][github-contributors-link]<br>
 [![][github-forks-shield]][github-forks-link]
 [![][github-stars-shield]][github-stars-link]
 [![][github-issues-shield]][github-issues-link]
-[![][github-license-shield]][github-license-link]
+[![][github-license-shield]][github-license-link] -->
 
 <!-- [![PyPI](https://badge.fury.io/py/opencompass.svg)](https://pypi.org/project/opencompass/) -->
 
@@ -19,6 +19,7 @@
 [📘Documentation](https://opencompass.readthedocs.io/en/latest/) |
 [🛠️Installation](https://opencompass.readthedocs.io/en/latest/get_started/installation.html) |
 [🤔Reporting Issues](https://github.com/open-compass/opencompass/issues/new/choose)
+
 <!-- 
 English | [简体中文](README_zh-CN.md)
 

@@ -107,6 +107,18 @@ def _extract_message_content_and_reasoning(response: Dict[str, Any]) -> tuple[st
     return str(content), reasoning
 
 
+def _build_request_messages(item: Dict[str, Any], system_prompt: str = "") -> List[Dict[str, str]]:
+    raw_messages = item.get("messages")
+    if isinstance(raw_messages, list) and raw_messages:
+        return raw_messages
+    prompt_text = str(item.get("prompt", ""))
+    messages: List[Dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt_text})
+    return messages
+
+
 if ray is not None:
 
     @ray.remote
@@ -157,15 +169,19 @@ if ray is not None:
                         results[idx] = item
                         return
 
-                    messages = item.get(
-                        "messages",
-                        [{"role": "user", "content": item.get("prompt", "")}],
-                    )
+                    system_prompt = str(self.sampling_params.get("__system_prompt", "") or "")
+                    messages = _build_request_messages(item, system_prompt=system_prompt)
                     payload = {
                         "model": self.api_config.model,
                         "messages": messages,
                     }
-                    payload.update(self.sampling_params)
+                    payload.update(
+                        {
+                            key: value
+                            for key, value in self.sampling_params.items()
+                            if key != "__system_prompt"
+                        }
+                    )
                     payload.update(
                         {
                             key: value
