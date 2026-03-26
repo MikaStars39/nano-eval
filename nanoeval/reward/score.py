@@ -50,54 +50,42 @@ def instance_judge(
 
 
 def _split_response_and_thinking(response: str, existing_thinking: object = None) -> tuple[str, str]:
+    """
+    Split response into thinking and final response.
+
+    Strategy:
+    1. If </thinking> or <|end_of_thought|> exists: content before is thinking, after is response
+    2. Otherwise: all content is response, thinking is empty (unless existing_thinking provided)
+    """
     text = str(response or "").strip()
     if not text:
         return "", ""
 
-    extracted_segments: List[str] = []
+    # Define split patterns: (pattern, include_pattern_in_thinking)
+    split_patterns = [
+        ("</thinking>", True),
+        ("<|end_of_thought|>", True),
+    ]
 
-    think_blocks = _THINK_BLOCK_PATTERN.findall(text)
-    if think_blocks:
-        extracted_segments.extend([block.strip() for block in think_blocks if block.strip()])
-        text = _THINK_BLOCK_PATTERN.sub("", text).strip()
+    for pattern, include_in_thinking in split_patterns:
+        idx = text.find(pattern)
+        if idx != -1:
+            if include_in_thinking:
+                thinking = text[:idx + len(pattern)].strip()
+                response_text = text[idx + len(pattern):].strip()
+            else:
+                thinking = text[:idx].strip()
+                response_text = text[idx + len(pattern):].strip()
+            return response_text, thinking
 
+    # No split pattern found - check for existing_thinking prefix
     if isinstance(existing_thinking, str):
         prefix = existing_thinking.strip()
         if prefix and text.startswith(prefix):
-            text = text[len(prefix):].lstrip()
+            return text[len(prefix):].lstrip(), prefix
 
-    final_match = None
-    for match in _FINAL_ANSWER_PATTERN.finditer(text):
-        final_match = match
-    if final_match is not None:
-        prefix_part = text[:final_match.start()].strip()
-        suffix_part = text[final_match.end():].strip()
-        if prefix_part:
-            extracted_segments.append(prefix_part)
-        if suffix_part:
-            text = suffix_part
-
-    if not think_blocks and final_match is None:
-        blocks = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
-        if len(blocks) >= 2:
-            maybe_thinking = blocks[:-1]
-            # Heuristic: only split when there are clear reasoning markers.
-            joined_prefix = " ".join(maybe_thinking).lower()
-            reasoning_markers = (
-                "thinking process",
-                "reasoning process",
-                "let me think",
-                "hmm",
-                "i should",
-                "step 1",
-                "analysis",
-            )
-            if any(marker in joined_prefix for marker in reasoning_markers):
-                extracted_segments.extend(maybe_thinking)
-                text = blocks[-1]
-
-    extracted_thinking = "\n\n".join(seg for seg in extracted_segments if seg).strip()
-    return text.strip(), extracted_thinking
+    # No split pattern, no prefix match - all is response
+    return text, ""
 
 
 def _build_task_question_scores(items: List[Dict]) -> Dict[str, Dict[str, List[float]]]:

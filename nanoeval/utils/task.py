@@ -100,8 +100,10 @@ def prepare_eval_input(
     pass_k_by_task: Dict[str, int],
     output_path: Path,
     chat_template_model_path: str | None = None,
-    system_prompt: str = "",
+    system_prompt: str | None = None,
 ) -> Dict[str, Any]:
+    import logging
+    logging.info("prepare_eval_input: system_prompt=%r", system_prompt)
     if not task_names:
         raise ValueError("No task names provided.")
 
@@ -121,7 +123,7 @@ def prepare_eval_input(
 
         def _to_chat_prompt(user_prompt: str) -> str:
             messages: List[Dict[str, str]] = []
-            if system_prompt and len(system_prompt) > 0:
+            if system_prompt is not None:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": user_prompt})
             return tokenizer.apply_chat_template(

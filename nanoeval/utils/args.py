@@ -130,8 +130,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--system-prompt",
         type=str,
-        default="",
-        help="System prompt used when applying chat template in step01.",
+        nargs="?",
+        const="",
+        default=None,
+        help=(
+            "System prompt used when applying chat template in step01. "
+            "Use --system-prompt 'text' to add system message; "
+            "use --system-prompt (empty) to add empty system message; "
+            "omit to skip system message entirely."
+        ),
     )
     parser.add_argument(
         "--api-key",

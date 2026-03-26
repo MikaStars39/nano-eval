@@ -39,6 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             task_dir=args.task_dir,
             default_pass_k=args.pass_k,
         )
+        logging.info("Step 0/1 system_prompt: %r", args.system_prompt)
         step01_summary = prepare_eval_input(
             task_names=task_names,
             task_dir=args.task_dir,
