@@ -42,7 +42,10 @@ nanoeval/
 
 ## Supported Tasks
 
-任务文件存放于 `--task-dir`（默认 `outputs/nano_eval/`），命名规则见 `nanoeval/utils/task.py:TASK_TO_JSONL`：
+任务文件存放于 `--task-dir`（默认 `outputs/nano_eval/`），命名规则见 `nanoeval/utils/task.py:TASK_TO_JSONL`。
+
+> **前置准备**：运行评测前需要先下载对应任务的 JSONL 数据文件到 `--task-dir` 目录下。如果用户本地没有这些文件，可以从 HuggingFace 下载：
+> https://huggingface.co/datasets/MikaStars39/nano-eval
 
 | 类型 | 任务名 |
 |------|--------|
