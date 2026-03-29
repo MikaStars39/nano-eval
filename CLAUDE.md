@@ -58,3 +58,24 @@ nanoeval/
 - `NLTK_DATA`：ifeval 评分所需的 NLTK 数据路径
 - `RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0`：Ray 分布式模式下所需
 
+## Git Workflow
+
+Every feature/fix follows: **new branch → commit → merge to main → push**.
+
+## Status Tracker
+
+### Done
+- [x] Skill `/gen-eval-script`: interactive eval script generator (`.claude/skills/gen-eval-script.md`)
+- [x] Core pipeline: step01→step02→step03 (prepare/infer/score)
+- [x] Backends: offline, online, online_ray, mock
+- [x] Tasks: aime2024/2025, amc2023, math500, minerva, hmmt2025, gpqa_diamond, mmlu/pro, ceval, ifeval, ifbench
+- [x] Extended sampling params (top-p/k, penalties, reasoning-effort)
+- [x] Example scripts in `scripts/`
+
+### TODO
+- (none currently — add items here as new work is identified)
+
+### Active Branches
+| Branch | Purpose | Status |
+|--------|---------|--------|
+| `main` | Stable trunk | current |
