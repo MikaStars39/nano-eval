@@ -15,6 +15,7 @@ TASK_TO_JSONL: Dict[str, str] = {
     "gpqa_diamond": "gpqa_diamond.jsonl",
     "mmlu": "mmlu.jsonl",
     "mmlu_pro": "mmlu_pro.jsonl",
+    "mmlu_prox": "mmlu_prox.jsonl",
     "ceval": "ceval.jsonl",
     "ifeval": "ifeval.jsonl",
     "ifbench": "ifbench.jsonl",

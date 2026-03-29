@@ -1,59 +1,8 @@
-<div align="center">
-  <img src="assets/nano_eval.png" width="500px"/>
-  <br />
-  <br />
-
-<p align="center">
-    🚀Nano-eval is a fast and super light-weight evaluation toolkit for LLM🚀
-</p>
-
-</div>
-
-## Overview
+> IMPORTANT:
+> - 除非特殊提醒，claude code默认是在一个开发机上运行的，这意味着这台机器上并没有安装任何能跑本项目相关代码的包。
+> - 所以，不要跑需要特殊包的python命令，而尽量让用户去运行。用户会把这个代码同步到GPU服务器上运行。
 
 NanoEval 是一个轻量高性能的 LLM 评测工具，采用三阶段流水线架构：**输入准备 → 推理 → 评分**。
-
-## Quick Start
-
-### 运行评测（完整流程）
-
-```bash
-# Online 后端（推荐用于 API 调用）
-python run.py \
-  --stage all \
-  --task-dir outputs/nano_eval \
-  --tasks "gpqa_diamond@4,math500@1,aime2025@8,ifeval@1" \
-  --output outputs/step01.jsonl \
-  --inference-output outputs/step02.jsonl \
-  --score-output outputs/step03_score.jsonl \
-  --final-eval-output outputs/step03_final.jsonl \
-  --backend online \
-  --api-key YOUR_KEY \
-  --base-url http://YOUR_ENDPOINT/v1 \
-  --model YOUR_MODEL \
-  --temperature 1.0 \
-  --max-tokens 131072 \
-  --concurrency 1024
-
-# Offline 后端（本地 SGLang）
-python run.py --stage all --backend offline --model-path /path/to/model ...
-```
-
-### 单独运行各阶段
-
-```bash
-python run.py --stage step01 ...  # 准备输入
-python run.py --stage step02 ...  # 推理
-python run.py --stage step03 ...  # 评分
-```
-
-### 运行测试
-
-```bash
-python -m pytest tests/
-python -m pytest tests/test_args.py
-python -m pytest tests/test_reward_score.py
-```
 
 ## Architecture
 
@@ -109,12 +58,3 @@ nanoeval/
 - `NLTK_DATA`：ifeval 评分所需的 NLTK 数据路径
 - `RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0`：Ray 分布式模式下所需
 
-## Examples
-
-`examples/thinking_online.sh` 和 `examples/thinking_offline.sh` 包含完整的生产级运行示例。
-
-## 🤝 Acknowledgements
-
-Some code in this project is cited and modified from [OpenICL](https://github.com/Shark-NLP/OpenICL).
-
-Some datasets and prompt implementations are modified from [chain-of-thought-hub](https://github.com/FranxYao/chain-of-thought-hub) and [instruct-eval](https://github.com/declare-lab/instruct-eval).
