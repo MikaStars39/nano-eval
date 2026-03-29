@@ -4,6 +4,10 @@ description: Generate a NanoEval evaluation bash script (offline or online backe
 user_invocable: true
 ---
 
+> IMPORTANT
+> Do not directly write into the scripts folder a new script!
+> scripts is designed for .sh that are undergone ci test and are designed for examples!
+
 # Generate NanoEval Evaluation Script
 
 You are generating a bash evaluation script for the NanoEval framework. Ask the user for the required parameters, then produce a ready-to-run shell script.
@@ -43,7 +47,7 @@ For any parameter the user doesn't specify, use the defaults above.
 
 ## Script Template
 
-Generate the script at the path the user specifies (or default to `scripts/eval_<run_name>.sh`).
+Generate the script at the path the user specifies (or default to `recipes/eval_<run_name>.sh`).
 
 ### Offline template
 

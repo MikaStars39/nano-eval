@@ -53,6 +53,11 @@ nanoeval/
 
 **Pass@k 语法**：`--tasks "aime2025@8,math500@1"` 表示 aime2025 每题采样 8 次，`@k` 省略时使用 `--pass-k` 默认值。
 
+## Directory Conventions
+
+- **`recipes/`** — 用户自行编写的评测脚本（.sh），用于跑各种模型的评测实验。Claude 生成的评测脚本默认放在这里。
+- **`scripts/`** — 经过良好 CI 测试的示例脚本，作为参考和模板使用。**不要直接往 scripts/ 里写新的评测脚本。**
+
 ## Environment Variables
 
 - `NLTK_DATA`：ifeval 评分所需的 NLTK 数据路径
@@ -63,14 +68,6 @@ nanoeval/
 Every feature/fix follows: **new branch → commit → merge to main → push**.
 
 ## Status Tracker
-
-### Done
-- [x] Skill `/gen-eval-script`: interactive eval script generator (`.claude/skills/gen-eval-script.md`)
-- [x] Core pipeline: step01→step02→step03 (prepare/infer/score)
-- [x] Backends: offline, online, online_ray, mock
-- [x] Tasks: aime2024/2025, amc2023, math500, minerva, hmmt2025, gpqa_diamond, mmlu/pro, ceval, ifeval, ifbench
-- [x] Extended sampling params (top-p/k, penalties, reasoning-effort)
-- [x] Example scripts in `scripts/`
 
 ### TODO
 - (none currently — add items here as new work is identified)
