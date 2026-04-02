@@ -32,4 +32,6 @@ ray job submit \
   --top-p       0.95 \
   --max-new-tokens 32768 \
   --n-proc      32 \
+  --acc-min     0.1 \
+  --acc-max     0.9 \
   2>&1 | tee "${WORKDIR}/run.log"
