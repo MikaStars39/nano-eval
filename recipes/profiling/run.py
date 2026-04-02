@@ -12,7 +12,8 @@ import asyncio
 import json
 import math
 import os
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from typing import Optional
 
@@ -58,7 +59,7 @@ def _preprocess(
     total = 0
     with open(input_file, "r", encoding="utf-8") as fin, \
          open(output_file, "w", encoding="utf-8") as fout:
-        for batch in Pool(num_workers).imap(_process, enumerate(fin), chunksize=64):
+        for batch in ThreadPool(num_workers).imap(_process, enumerate(fin), chunksize=64):
             if batch:
                 for line in batch:
                     fout.write(line + "\n")
@@ -124,11 +125,13 @@ def _run_shard(
     from nanoeval.backend.offline import BatchInferenceEngine
 
     async def _go():
-        async with BatchInferenceEngine(
+        engine_kwargs = dict(
             model_path=model_path, tp_size=tp, dp_size=dp,
             max_inflight=max_inflight, mem_fraction_static=mem_frac,
-            enable_dp_attention=dp_attn,
-        ) as engine:
+        )
+        if dp_attn:
+            engine_kwargs["enable_dp_attention"] = True
+        async with BatchInferenceEngine(**engine_kwargs) as engine:
             await engine.run(input_file=shard_in, output_file=shard_out,
                              sampling_params=sampling, resume=resume)
     asyncio.run(_go())
@@ -149,13 +152,59 @@ def _score(inference_output: str, score_output: str, final_output: str, n_proc: 
         print(f"  {task}: avg_k={m.get('avg_k', 0):.4f}  pass_k={m.get('pass_k', 0):.4f}")
 
 
+# ------------------------ Step 4: Filter by accuracy ------------------------
+
+def _filter(
+    original_input: str,
+    score_file: str,
+    output_file: str,
+    acc_min: Optional[float],
+    acc_max: Optional[float],
+):
+    """Read score.jsonl, compute per-question accuracy, filter original input."""
+    # 1. Aggregate per-question accuracy from score results
+    q_scores: dict[str, list[float]] = {}
+    with open(score_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            qid = item.get("question_id", "unknown")
+            score = 1.0 if item.get("pass", False) else 0.0
+            q_scores.setdefault(qid, []).append(score)
+
+    q_acc = {qid: sum(s) / len(s) for qid, s in q_scores.items()}
+
+    # 2. Determine which question_ids pass the filter
+    lo = acc_min if acc_min is not None else 0.0
+    hi = acc_max if acc_max is not None else 1.0
+    keep_ids = {qid for qid, acc in q_acc.items() if lo <= acc <= hi}
+
+    # 3. Filter original input (line index == question_id)
+    kept, total = 0, 0
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+    with open(original_input, "r", encoding="utf-8") as fin, \
+         open(output_file, "w", encoding="utf-8") as fout:
+        for idx, line in enumerate(fin):
+            if not line.strip():
+                continue
+            total += 1
+            if str(idx) in keep_ids:
+                data = json.loads(line)
+                data["_profiling_acc"] = q_acc.get(str(idx), 0.0)
+                fout.write(json.dumps(data, ensure_ascii=False) + "\n")
+                kept += 1
+
+    print(f"[filter] acc in [{lo}, {hi}]: kept {kept}/{total} questions -> {output_file}")
+
+
 # ------------------------ Main ------------------------
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--input", required=True)
     p.add_argument("--output-dir", required=True)
-    p.add_argument("--stage", default="all", choices=["preprocess", "inference", "score", "all"])
+    p.add_argument("--stage", default="all", choices=["preprocess", "inference", "score", "filter", "all"])
     # preprocess
     p.add_argument("--prompt-key", default="messages")
     p.add_argument("--label-key", default="label")
@@ -177,6 +226,11 @@ def main():
     p.add_argument("--resume", action="store_true")
     # score
     p.add_argument("--n-proc", type=int, default=32)
+    # filter
+    p.add_argument("--acc-min", type=float, default=None,
+                   help="Min accuracy (inclusive) to keep a question, e.g. 0.1")
+    p.add_argument("--acc-max", type=float, default=None,
+                   help="Max accuracy (inclusive) to keep a question, e.g. 0.9")
     a = p.parse_args()
 
     od = a.output_dir
@@ -185,6 +239,7 @@ def main():
     inference_out = os.path.join(od, "inference.jsonl")
     score_out = os.path.join(od, "score.jsonl")
     final_out = os.path.join(od, "final_eval.jsonl")
+    filtered_out = os.path.join(od, "filtered.jsonl")
 
     if a.stage in ("preprocess", "all"):
         tok = a.tokenizer or a.model_path
@@ -222,6 +277,14 @@ def main():
     if a.stage in ("score", "all"):
         print("[score] evaluating...")
         _score(inference_out, score_out, final_out, a.n_proc)
+
+    if a.stage in ("filter", "all"):
+        if a.acc_min is None and a.acc_max is None:
+            print("[filter] skipped (no --acc-min / --acc-max specified)")
+        else:
+            print("[filter] filtering by accuracy range...")
+            _filter(a.input, score_out, filtered_out,
+                    a.acc_min, a.acc_max)
 
 
 if __name__ == "__main__":
