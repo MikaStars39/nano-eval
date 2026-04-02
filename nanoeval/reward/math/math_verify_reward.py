@@ -1,13 +1,14 @@
 from typing import Tuple
 
 import re
-from fractions import Fraction
-
 try:
     from math_verify import parse, verify
-except Exception:
-    parse = None
-    verify = None
+except ImportError:
+    raise ImportError(
+        "math_verify is required for math evaluation but not installed. "
+        "Falling back to string comparison is unsafe (e.g. '\\left(' vs '(' are mathematically equivalent but fail string match). "
+        "Please install it: pip install math_verify"
+    )
 
 def extract_answer(text: str) -> str:
     """Extract answer from model response using regex (boxed or last value)."""
@@ -55,12 +56,7 @@ def extract_answer(text: str) -> str:
         return None
 
 def grade_answer(solution_str: str, ground_truth: str) -> Tuple[float, float]:
-    if parse is None or verify is None:
-        pred_norm = _normalize_answer(solution_str)
-        gold_norm = _normalize_answer(ground_truth)
-        return (1.0, 1.0) if pred_norm == gold_norm else (0.0, 1.0)
-
-    try: 
+    try:
         ground_truth = parse(ground_truth)
         solution = parse(solution_str)
         if verify(ground_truth, solution):
@@ -71,16 +67,6 @@ def grade_answer(solution_str: str, ground_truth: str) -> Tuple[float, float]:
         print(f"Error: {e}")
         return 0.0, 0.0
 
-
-def _normalize_answer(text: str) -> str:
-    normalized = text.strip()
-    if normalized.startswith("$") and normalized.endswith("$") and len(normalized) >= 2:
-        normalized = normalized[1:-1].strip()
-    normalized = normalized.replace(" ", "")
-    try:
-        return str(Fraction(normalized))
-    except Exception:
-        return normalized
 
 def math_judge(
     response: str,
