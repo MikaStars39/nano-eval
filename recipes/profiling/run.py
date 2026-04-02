@@ -12,7 +12,8 @@ import asyncio
 import json
 import math
 import os
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from typing import Optional
 
@@ -58,7 +59,7 @@ def _preprocess(
     total = 0
     with open(input_file, "r", encoding="utf-8") as fin, \
          open(output_file, "w", encoding="utf-8") as fout:
-        for batch in Pool(num_workers).imap(_process, enumerate(fin), chunksize=64):
+        for batch in ThreadPool(num_workers).imap(_process, enumerate(fin), chunksize=64):
             if batch:
                 for line in batch:
                     fout.write(line + "\n")
@@ -124,11 +125,13 @@ def _run_shard(
     from nanoeval.backend.offline import BatchInferenceEngine
 
     async def _go():
-        async with BatchInferenceEngine(
+        engine_kwargs = dict(
             model_path=model_path, tp_size=tp, dp_size=dp,
             max_inflight=max_inflight, mem_fraction_static=mem_frac,
-            enable_dp_attention=dp_attn,
-        ) as engine:
+        )
+        if dp_attn:
+            engine_kwargs["enable_dp_attention"] = True
+        async with BatchInferenceEngine(**engine_kwargs) as engine:
             await engine.run(input_file=shard_in, output_file=shard_out,
                              sampling_params=sampling, resume=resume)
     asyncio.run(_go())
