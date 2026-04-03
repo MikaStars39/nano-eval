@@ -30,8 +30,8 @@ ray job submit \
   --max-inflight 1024 \
   --temperature 1.0 \
   --top-p       0.95 \
-  --max-new-tokens 32768 \
+  --max-new-tokens 30000 \
   --n-proc      32 \
-  --acc-min     0.1 \
-  --acc-max     0.9 \
+  --acc-min     0.0 \
+  --acc-max     0.7 \
   2>&1 | tee "${WORKDIR}/run.log"

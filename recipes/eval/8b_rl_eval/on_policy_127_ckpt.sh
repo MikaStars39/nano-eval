@@ -3,15 +3,15 @@ set -euo pipefail
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT=/jpfs-5p/qingyu/nano-eval
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
-WORKDIR="${REPO_ROOT}/outputs/offline_${TIMESTAMP}"
+WORKDIR="${REPO_ROOT}/outputs/iter_0000127_qwen3_8b_rl_onpolicy_offline_${TIMESTAMP}"
 mkdir -p "${WORKDIR}"
 
 TASK_ARGS=(
   --stage all
-  --task-dir "${REPO_ROOT}/outputs/nano_eval"
-  --tasks "ifeval@1"
+  --task-dir "/jpfs/chenyanxu.9/data/nano-eval"
+  --tasks "aime2024@32,aime2025@32,math500@4,gpqa_diamond@4"
   --output "${WORKDIR}/step01_prepared.jsonl"
   --inference-output "${WORKDIR}/step02_inference.jsonl"
   --score-output "${WORKDIR}/step03_score.jsonl"
@@ -19,14 +19,14 @@ TASK_ARGS=(
 )
 
 ROLLOUT_ARGS=(
-  --model-path "${MODEL_PATH:?Set MODEL_PATH}"
+  --model-path "/jpfs-5p/chenyanxu.9/model/Qwen3-8B-dapo-rl-20260401_072346/iter_0000127-hf"
   --backend offline
-  --tp-size "${TP_SIZE:-1}"
-  --dp-size "${DP_SIZE:-8}"
-  --temperature 0.6
+  --tp-size 1
+  --dp-size 8
+  --temperature 1.0
   --top-p 0.95
   --enable-thinking true
-  --max-tokens 81920
+  --max-tokens 30000
   --n-proc 32
 )
 
