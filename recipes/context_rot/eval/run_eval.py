@@ -12,6 +12,7 @@ For each test point in eval_set.jsonl:
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -29,16 +30,7 @@ from openai import AsyncOpenAI
 from simulator import ToolSimulator
 from judge import judge_step
 
-
-# ── Logging ──────────────────────────────────────────────────
-
-def log(msg: str, tp_id: str = ""):
-    """Print a timestamped log line to stderr."""
-    ts = datetime.now().strftime("%H:%M:%S")
-    prefix = f"[{ts}]"
-    if tp_id:
-        prefix += f" [{tp_id}]"
-    print(f"{prefix} {msg}", file=sys.stderr, flush=True)
+logger = logging.getLogger(__name__)
 
 
 # ── Progress Tracker ──────────────────────────────────────────────────
@@ -74,7 +66,8 @@ async def api_call_with_retry(coro_fn, max_retries=5, base_delay=2.0, tp_id=""):
             error_str = str(e)
             if "429" in error_str and attempt < max_retries:
                 delay = base_delay * (2 ** attempt)
-                log(f"Rate limited, retry {attempt+1}/{max_retries} in {delay:.0f}s...", tp_id)
+                logger.warning("Rate limited, retry %d/%d in %.0fs... [%s]",
+                               attempt + 1, max_retries, delay, tp_id)
                 await asyncio.sleep(delay)
                 continue
             raise
@@ -97,21 +90,17 @@ async def run_agent_loop(
     """Run the agent loop; returns (all_new_messages, final_text_output, exit_reason).
 
     exit_reason: "completed" | "tool_failure" | "max_turns" | "api_error" | "next_subtask"
-
-    If target_subtask_re and target_subtask_num are provided, the loop exits early
-    when the model starts working on a different subtask (reads a file matching a
-    subtask number != target_subtask_num).
     """
     new_messages = []
     final_text = ""
     exit_reason = "max_turns"
     nudge_count = 0
-    max_nudges = 2  # max retry nudges if model refuses to use tools
+    max_nudges = 2
 
-    wrap_up_injected = False  # whether we've injected the "stop calling tools" message
+    wrap_up_injected = False
 
     for turn in range(max_turns):
-        log(f"Agent turn {turn+1}/{max_turns} — calling model...", tp_id)
+        logger.info("Agent turn %d/%d — calling model... [%s]", turn + 1, max_turns, tp_id)
 
         # Near the turn limit: inject a wrap-up message and disable tools
         use_tools = tools
@@ -127,7 +116,7 @@ async def run_agent_loop(
             new_messages.append(wrap_up_msg)
             wrap_up_injected = True
             use_tools = None
-            log(f"  Injected wrap-up message (turn limit approaching)", tp_id)
+            logger.info("  Injected wrap-up message (turn limit approaching) [%s]", tp_id)
 
         try:
             response = await api_call_with_retry(
@@ -144,12 +133,12 @@ async def run_agent_loop(
             error_detail = str(e)
             if hasattr(e, 'body'):
                 error_detail += f" | body: {e.body}"
-            log(f"API error (after retries): {error_detail}", tp_id)
+            logger.error("API error (after retries): %s [%s]", error_detail, tp_id)
             exit_reason = "api_error"
             break
 
         if not response.choices:
-            log(f"API returned empty choices, skipping", tp_id)
+            logger.warning("API returned empty choices, skipping [%s]", tp_id)
             exit_reason = "api_error"
             break
 
@@ -157,21 +146,23 @@ async def run_agent_loop(
         assistant_msg = choice.message
 
         if not assistant_msg:
-            log(f"API returned empty message, skipping", tp_id)
+            logger.warning("API returned empty message, skipping [%s]", tp_id)
             exit_reason = "api_error"
             break
 
         # Log token usage
         usage = response.usage
         if usage:
-            log(f"  tokens: prompt={usage.prompt_tokens} completion={usage.completion_tokens} total={usage.total_tokens}", tp_id)
+            logger.info("  tokens: prompt=%d completion=%d total=%d [%s]",
+                        usage.prompt_tokens, usage.completion_tokens, usage.total_tokens, tp_id)
 
         # Build assistant message dict
         msg_dict: dict[str, Any] = {"role": "assistant"}
         if assistant_msg.content:
             msg_dict["content"] = assistant_msg.content
             content_preview = assistant_msg.content[:100].replace("\n", " ")
-            log(f"  output: {len(assistant_msg.content)} chars — \"{content_preview}...\"", tp_id)
+            logger.info('  output: %d chars — "%s..." [%s]',
+                        len(assistant_msg.content), content_preview, tp_id)
         if assistant_msg.tool_calls:
             msg_dict["tool_calls"] = [
                 {
@@ -185,7 +176,7 @@ async def run_agent_loop(
                 for tc in assistant_msg.tool_calls
             ]
             tool_names = [tc.function.name for tc in assistant_msg.tool_calls]
-            log(f"  tool_calls: {tool_names}", tp_id)
+            logger.info("  tool_calls: %s [%s]", tool_names, tp_id)
 
         messages.append(msg_dict)
         new_messages.append(msg_dict)
@@ -193,7 +184,6 @@ async def run_agent_loop(
         # No tool calls -> check if we should nudge or end
         if not assistant_msg.tool_calls:
             if nudge_count < max_nudges and simulator.call_count == 0:
-                # Model refused to use tools on early turns — inject a nudge
                 nudge_count += 1
                 nudge_msg = {
                     "role": "user",
@@ -205,11 +195,12 @@ async def run_agent_loop(
                 }
                 messages.append(nudge_msg)
                 new_messages.append(nudge_msg)
-                log(f"  No tool calls yet — injecting nudge ({nudge_count}/{max_nudges})", tp_id)
+                logger.info("  No tool calls yet — injecting nudge (%d/%d) [%s]",
+                            nudge_count, max_nudges, tp_id)
                 continue
             final_text = assistant_msg.content or ""
             exit_reason = "completed"
-            log(f"  finish_reason={choice.finish_reason}, ending agent loop", tp_id)
+            logger.info("  finish_reason=%s, ending agent loop [%s]", choice.finish_reason, tp_id)
             break
 
         # Process tool calls
@@ -229,8 +220,8 @@ async def run_agent_loop(
                 if m_file:
                     num = int(m_file.group(1))
                     if num != target_subtask_num:
-                        log(f"  Early exit: model started subtask {num} "
-                            f"(target was {target_subtask_num})", tp_id)
+                        logger.info("  Early exit: model started subtask %d "
+                                    "(target was %d) [%s]", num, target_subtask_num, tp_id)
                         next_subtask_exit = True
                         break
 
@@ -245,7 +236,8 @@ async def run_agent_loop(
             new_messages.append(tool_msg)
 
             if simulator.consecutive_fallbacks >= max_tool_failures:
-                log(f"  Early exit: {max_tool_failures} consecutive tool call failures", tp_id)
+                logger.info("  Early exit: %d consecutive tool call failures [%s]",
+                            max_tool_failures, tp_id)
                 tool_failure_exit = True
                 break
 
@@ -261,7 +253,7 @@ async def run_agent_loop(
         if choice.finish_reason == "stop":
             final_text = assistant_msg.content or ""
             exit_reason = "completed"
-            log(f"  finish_reason=stop, ending agent loop", tp_id)
+            logger.info("  finish_reason=stop, ending agent loop [%s]", tp_id)
             break
 
     return new_messages, final_text, exit_reason
@@ -269,108 +261,23 @@ async def run_agent_loop(
 
 # ── Step segmentation config ──────────────────────────────────────────────────
 
-# Subtask file patterns for detecting step boundaries per case
 STEP_FILE_PATTERNS = {
     "resume-screening-1": re.compile(r"resume_(\d{2})\.md"),
     "competitive-analysis-1": re.compile(r"competitor_(\d+)"),
     "stock-research-1": re.compile(r"question_(\d+)"),
 }
 
-# Subtask ID format strings
 STEP_ID_FORMATS = {
     "resume-screening-1": "R{:02d}",
     "competitive-analysis-1": "C{:02d}",
     "stock-research-1": "Q{:02d}",
 }
 
-# Patterns for detecting subtask mentions in assistant text
 STEP_TEXT_PATTERNS = {
     "resume-screening-1": re.compile(r"(?:R|resume[_\s]?)(\d{2})"),
     "competitive-analysis-1": re.compile(r"C(\d{2})"),
     "stock-research-1": re.compile(r"Q(\d{1,2})"),
 }
-
-
-def segment_trajectory_by_steps(
-    new_messages: list[dict],
-    case_id: str,
-    start_subtask_num: int = 1,
-) -> list[dict]:
-    """
-    Segment agent loop messages by subtask.
-    Returns [{"subtask_id": "R03", "subtask_num": 3, "messages": [...], "text": "..."}, ...]
-
-    Step boundary detection priority:
-    1. Read tool call file_path matching the subtask file pattern
-    2. Assistant text mentioning a new subtask ID (only when num >= start_subtask_num)
-    """
-    file_pattern = STEP_FILE_PATTERNS.get(case_id)
-    text_pattern = STEP_TEXT_PATTERNS.get(case_id)
-    id_format = STEP_ID_FORMATS.get(case_id, "S{:02d}")
-
-    segments: list[dict] = []
-    current_num: int | None = None
-    current_msgs: list[dict] = []
-    seen_nums: set[int] = set()
-
-    def _flush():
-        nonlocal current_msgs
-        if current_num is not None and current_msgs:
-            # Extract all assistant text in this step (strip <think> blocks)
-            text_parts = []
-            for m in current_msgs:
-                if m["role"] == "assistant" and m.get("content"):
-                    cleaned = re.sub(r"<think>.*?</think>\s*", "", m["content"], flags=re.DOTALL).strip()
-                    if cleaned:
-                        text_parts.append(cleaned)
-            segments.append({
-                "subtask_id": id_format.format(current_num),
-                "subtask_num": current_num,
-                "messages": current_msgs,
-                "text": "\n\n".join(text_parts),
-            })
-        current_msgs = []
-
-    for msg in new_messages:
-        detected_num = None
-
-        if msg["role"] == "assistant":
-            # Check tool call file paths (most reliable signal)
-            for tc in msg.get("tool_calls", []):
-                func = tc.get("function", {})
-                if func.get("name") == "Read":
-                    try:
-                        args = json.loads(func.get("arguments", "{}"))
-                    except json.JSONDecodeError:
-                        continue
-                    fp = args.get("file_path", "")
-                    if file_pattern:
-                        m = file_pattern.search(fp)
-                        if m:
-                            num = int(m.group(1))
-                            if num >= start_subtask_num and num not in seen_nums:
-                                detected_num = num
-                                break
-
-            # If file path detection missed, look for first new subtask mention in text
-            if detected_num is None and text_pattern and msg.get("content"):
-                content = msg["content"][:300]
-                matches = text_pattern.findall(content)
-                for match_str in matches:
-                    num = int(match_str)
-                    if num >= start_subtask_num and num not in seen_nums:
-                        detected_num = num
-                        break
-
-        if detected_num is not None:
-            _flush()
-            current_num = detected_num
-            seen_nums.add(detected_num)
-
-        current_msgs.append(msg)
-
-    _flush()
-    return segments
 
 
 # ── Single test point handler ──────────────────────────────────────────────────
@@ -393,26 +300,18 @@ async def run_single_test_point(
     """Process a single test point: agent loop + per-step judge scoring."""
     async with semaphore:
         tp_id = tp["id"]
-        # Use full tool_responses_pool if available, fall back to legacy tool_responses
         pool = tp.get("tool_responses_pool", tp["tool_responses"])
         cut_pos = tp.get("cut_position", 0)
         known_paths = tp.get("known_file_paths", [])
 
-        log(f"START — case={tp['case_id']} point={tp['test_point']} cond={tp['condition']} "
-            f"prefix={len(tp['prefix_messages'])} msgs, pool={len(pool)} tool_resp, "
-            f"cut_pos={cut_pos}, known_files={len(known_paths)}", tp_id)
+        logger.info("START — case=%s point=%s cond=%s prefix=%d msgs, pool=%d tool_resp, "
+                     "cut_pos=%d, known_files=%d [%s]",
+                     tp['case_id'], tp['test_point'], tp['condition'],
+                     len(tp['prefix_messages']), len(pool), cut_pos, len(known_paths), tp_id)
 
         simulator = ToolSimulator(pool, cut_position=cut_pos, known_file_paths=known_paths)
         messages = list(tp["prefix_messages"])
 
-        # Append a continuation prompt telling the model to complete exactly
-        # ONE subtask.  Each test point targets a single subtask; the context-rot
-        # signal comes from comparing scores across test points with increasing
-        # prefix length, not from doing many subtasks in one run.
-        #
-        # The target file content is pre-loaded so the model doesn't depend on
-        # simulator Read matching.  This levels the playing field between models
-        # that rely on tools heavily vs. those that don't.
         subtask_id = tp["subtask_id"]
         target_content = tp.get("target_content", "")
 
@@ -433,18 +332,12 @@ async def run_single_test_point(
         }
         messages.append(continuation_msg)
 
-        # ── Query padding injection (distance experiment) ──
-        # If the test point has query_padding_messages, inject them after the
-        # continuation prompt.  These dummy tool-call rounds push the user query
-        # further from the model's generation position, allowing us to measure
-        # the effect of user-query distance independently of SP distance.
         query_padding = tp.get("query_padding_messages", [])
         if query_padding:
-            log(f"Injecting {len(query_padding)} query-padding messages", tp_id)
+            logger.info("Injecting %d query-padding messages [%s]", len(query_padding), tp_id)
             messages.extend(query_padding)
 
         # ── Phase 1: Agent Loop ──
-        # Build subtask boundary detector for early exit
         file_pattern = STEP_FILE_PATTERNS.get(tp["case_id"])
         target_num_match = re.search(r'\d+', subtask_id)
         target_num = int(target_num_match.group()) if target_num_match else None
@@ -463,17 +356,13 @@ async def run_single_test_point(
         )
         agent_elapsed = time.time() - t0
 
-        log(f"Agent done — {len(new_messages)} msgs, {len(final_text)} chars, "
-            f"{simulator.call_count} tool calls ({simulator.match_summary}), "
-            f"exit={exit_reason}, {agent_elapsed:.1f}s", tp_id)
+        logger.info("Agent done — %d msgs, %d chars, %d tool calls (%s), exit=%s, %.1fs [%s]",
+                     len(new_messages), len(final_text), simulator.call_count,
+                     simulator.match_summary, exit_reason, agent_elapsed, tp_id)
 
         # ── Phase 2: Judge the single target subtask ──
         t1 = time.time()
 
-        # Collect all model-generated content for judging.
-        # Two sources: (1) assistant message text, (2) content written via
-        # Edit/Write tool calls (new_string / content args).  Some models
-        # output evaluation in text, others write it to files — we capture both.
         text_parts = []
         for m in new_messages:
             if m["role"] == "assistant":
@@ -482,7 +371,6 @@ async def run_single_test_point(
                     cleaned = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
                     if cleaned:
                         text_parts.append(cleaned)
-                # Extract substantive content from Edit/Write tool call args
                 for tc in m.get("tool_calls", []):
                     func = tc.get("function", {})
                     fname = func.get("name", "")
@@ -492,24 +380,25 @@ async def run_single_test_point(
                         except json.JSONDecodeError:
                             continue
                         written = tc_args.get("new_string", "") or tc_args.get("content", "")
-                        # Only include substantial content (skip short edits like status updates)
                         if written and len(written) > 200:
                             text_parts.append(written)
 
         all_model_text = "\n\n".join(text_parts).strip()
 
-        # Pick the reference for the target subtask
         step_refs_map = {r["subtask_id"]: r["reference_output"]
                          for r in tp.get("step_references", [])}
         ref = step_refs_map.get(subtask_id, tp["reference_output"])
 
-        # Judge
+        # Judge — pass logger-compatible functions
+        def _log_fn(msg, tp_id_inner=""):
+            logger.info("%s [%s]", msg, tp_id_inner)
+
         if all_model_text:
             judge_result = await judge_step(
                 judge_client, judge_model,
                 tp["case_id"], tp["eval_criteria"],
                 all_model_text, ref, subtask_id,
-                tp_id=tp_id, log_fn=log, retry_fn=api_call_with_retry,
+                tp_id=tp_id, log_fn=_log_fn, retry_fn=api_call_with_retry,
             )
         else:
             judge_result = {"scores": {}, "overall": 0.0, "justification": "No output"}
@@ -523,11 +412,10 @@ async def run_single_test_point(
         success = overall > 0
         await progress.mark_done(success=success)
 
-        log(f"DONE {progress.progress_str} — overall={overall:.3f} "
-            f"scores={judge_result.get('scores', {})} "
-            f"exit={exit_reason} "
-            f"agent={agent_elapsed:.1f}s judge={judge_elapsed:.1f}s total={total_elapsed:.1f}s",
-            tp_id)
+        logger.info("DONE %s — overall=%.3f scores=%s exit=%s "
+                     "agent=%.1fs judge=%.1fs total=%.1fs [%s]",
+                     progress.progress_str, overall, judge_result.get('scores', {}),
+                     exit_reason, agent_elapsed, judge_elapsed, total_elapsed, tp_id)
 
         result = {
             "id": tp_id,
@@ -550,7 +438,6 @@ async def run_single_test_point(
             "response": all_model_text[:5000],
         }
 
-        # Trajectory record: save all messages generated by the agent loop
         traj_record = {
             "id": tp_id,
             "model": model,
@@ -596,20 +483,20 @@ async def async_main():
     traj_path = output_path.parent / "trajectories.jsonl"
 
     # Print configuration
-    print("=" * 70, file=sys.stderr)
-    print("Context Rot Evaluation", file=sys.stderr)
-    print("=" * 70, file=sys.stderr)
-    print(f"  Model:        {args.model}", file=sys.stderr)
-    print(f"  Judge:        {args.judge_model}", file=sys.stderr)
-    print(f"  API base:     {args.api_base}", file=sys.stderr)
-    print(f"  Judge base:   {args.judge_api_base or args.api_base}", file=sys.stderr)
-    print(f"  Input:        {input_path}", file=sys.stderr)
-    print(f"  Output:       {output_path}", file=sys.stderr)
-    print(f"  Trajectories: {traj_path}", file=sys.stderr)
-    print(f"  Concurrency:  {args.concurrency}", file=sys.stderr)
-    print(f"  Max turns:    {args.max_turns}", file=sys.stderr)
-    print(f"  Started at:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", file=sys.stderr)
-    print("=" * 70, file=sys.stderr, flush=True)
+    logger.info("=" * 70)
+    logger.info("Context Rot Evaluation")
+    logger.info("=" * 70)
+    logger.info("  Model:        %s", args.model)
+    logger.info("  Judge:        %s", args.judge_model)
+    logger.info("  API base:     %s", args.api_base)
+    logger.info("  Judge base:   %s", args.judge_api_base or args.api_base)
+    logger.info("  Input:        %s", input_path)
+    logger.info("  Output:       %s", output_path)
+    logger.info("  Trajectories: %s", traj_path)
+    logger.info("  Concurrency:  %s", args.concurrency)
+    logger.info("  Max turns:    %s", args.max_turns)
+    logger.info("  Started at:   %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("=" * 70)
 
     # Initialize async model client
     client_kwargs = {}
@@ -639,19 +526,17 @@ async def async_main():
 
     total = len(test_points)
 
-    # Print test point distribution
     by_case = defaultdict(list)
     by_cond = defaultdict(int)
     for tp in test_points:
         by_case[tp["case_id"]].append(tp["test_point"])
         by_cond[tp["condition"]] += 1
 
-    print(f"\nLoaded {total} test points:", file=sys.stderr)
+    logger.info("Loaded %d test points:", total)
     for case_id in sorted(by_case):
         points = sorted(by_case[case_id])
-        print(f"  {case_id}: {', '.join(points)}", file=sys.stderr)
-    print(f"  Conditions: {dict(by_cond)}", file=sys.stderr)
-    print(f"\n{'─' * 70}", file=sys.stderr, flush=True)
+        logger.info("  %s: %s", case_id, ', '.join(points))
+    logger.info("  Conditions: %s", dict(by_cond))
 
     progress = ProgressTracker(total)
     semaphore = asyncio.Semaphore(args.concurrency)
@@ -691,64 +576,53 @@ async def async_main():
 
     t_total = time.time() - t_start
 
-    print(f"\n{'=' * 70}", file=sys.stderr)
-    print("Evaluation Complete", file=sys.stderr)
-    print(f"{'=' * 70}", file=sys.stderr)
-    print(f"  Finished at:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", file=sys.stderr)
-    print(f"  Duration:     {t_total:.1f}s ({t_total/60:.1f}min)", file=sys.stderr)
-    print(f"  Results:      {len(successful)}/{total} succeeded, {len(errors)} failed", file=sys.stderr)
-    print(f"  Output:       {output_path}", file=sys.stderr)
-    print(f"  Trajectories: {traj_path}", file=sys.stderr)
+    logger.info("=" * 70)
+    logger.info("Evaluation Complete")
+    logger.info("=" * 70)
+    logger.info("  Finished at:  %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("  Duration:     %.1fs (%.1fmin)", t_total, t_total / 60)
+    logger.info("  Results:      %d/%d succeeded, %d failed", len(successful), total, len(errors))
+    logger.info("  Output:       %s", output_path)
+    logger.info("  Trajectories: %s", traj_path)
 
     if successful:
         scores = [r["overall"] for r in successful]
         avg = sum(scores) / len(scores)
-        print(f"  Avg score:    {avg:.3f} (min={min(scores):.3f}, max={max(scores):.3f})", file=sys.stderr)
+        logger.info("  Avg score:    %.3f (min=%.3f, max=%.3f)", avg, min(scores), max(scores))
 
-        # Aggregate by test point (P1-P5) — this IS the quality curve
         by_point: dict[str, list[float]] = defaultdict(list)
         for r in successful:
             by_point[r["test_point"]].append(r["overall"])
-        print(f"\n  Score by test point (quality curve):", file=sys.stderr)
+        logger.info("  Score by test point (quality curve):")
         for p in sorted(by_point):
             vals = by_point[p]
-            print(f"    {p}: {sum(vals)/len(vals):.3f} (n={len(vals)})", file=sys.stderr)
+            logger.info("    %s: %.3f (n=%d)", p, sum(vals) / len(vals), len(vals))
 
-        # Aggregate by subtask_id for finer granularity
-        by_subtask: dict[str, list[float]] = defaultdict(list)
-        for r in successful:
-            by_subtask[r["subtask_id"]].append(r["overall"])
-        if len(by_subtask) > 1:
-            print(f"\n  Score by subtask:", file=sys.stderr)
-            for sid in sorted(by_subtask):
-                vals = by_subtask[sid]
-                print(f"    {sid}: {sum(vals)/len(vals):.3f} (n={len(vals)})", file=sys.stderr)
-
-        # Aggregate by case
         by_case_score: dict[str, list[float]] = defaultdict(list)
         for r in successful:
             by_case_score[r["case_id"]].append(r["overall"])
         if len(by_case_score) > 1:
-            print(f"\n  Score by case:", file=sys.stderr)
+            logger.info("  Score by case:")
             for cid in sorted(by_case_score):
                 vals = by_case_score[cid]
-                print(f"    {cid}: {sum(vals)/len(vals):.3f} (n={len(vals)})", file=sys.stderr)
+                logger.info("    %s: %.3f (n=%d)", cid, sum(vals) / len(vals), len(vals))
 
-        # Exit reason statistics
         exit_reasons = defaultdict(int)
         for r in successful:
             exit_reasons[r.get("exit_reason", "unknown")] += 1
-        print(f"\n  Exit reasons: {dict(exit_reasons)}", file=sys.stderr)
+        logger.info("  Exit reasons: %s", dict(exit_reasons))
 
     if errors:
-        print(f"\n  Errors:", file=sys.stderr)
+        logger.error("  Errors:")
         for i, e in errors:
-            print(f"    test_point[{i}]: {e}", file=sys.stderr)
+            logger.error("    test_point[%d]: %s", i, e)
 
-    print(f"{'=' * 70}", file=sys.stderr, flush=True)
+    logger.info("=" * 70)
 
 
 def main():
+    from nanoeval.utils.logging_utils import configure_logger
+    configure_logger()
     asyncio.run(async_main())
 
 
