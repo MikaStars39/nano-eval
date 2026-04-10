@@ -11,28 +11,19 @@ Refactored to use nano-eval's OnlineBatchInferenceEngine for batch inference.
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
-import tempfile
-from datetime import datetime
 from pathlib import Path
 
 # Add nano-eval root to path for importing nanoeval modules
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from nanoeval.backend.online import OnlineBatchInferenceEngine, APIConfig
 
-
-# ── Logging ──────────────────────────────────────────────────
-
-def log(msg: str, item_id: str = ""):
-    ts = datetime.now().strftime("%H:%M:%S")
-    prefix = f"[{ts}]"
-    if item_id:
-        prefix += f" [{item_id}]"
-    print(f"{prefix} {msg}", file=sys.stderr, flush=True)
+logger = logging.getLogger(__name__)
 
 
 # ── Judge prompt ──────────────────────────────────────────────
@@ -102,7 +93,7 @@ def read_original_example(source_file: str, line_number: int) -> dict | None:
                 if i == line_number:
                     return json.loads(line.strip())
     except Exception as e:
-        log(f"Error reading {source_file}:{line_number}: {e}")
+        logger.error("Error reading %s:%d: %s", source_file, line_number, e)
     return None
 
 
@@ -268,7 +259,7 @@ def prepare_batch_input(flagged_items: list[dict], output_path: str) -> dict[str
             # Read original example
             example = read_original_example(flagged["source_file"], flagged["line_number"])
             if not example:
-                log(f"Could not read original file, skipping", item_id)
+                logger.warning("[%s] Could not read original file, skipping", item_id)
                 skipped += 1
                 continue
 
@@ -286,7 +277,7 @@ def prepare_batch_input(flagged_items: list[dict], output_path: str) -> dict[str
             f.write(json.dumps(batch_item, ensure_ascii=False) + "\n")
             id_to_flagged[item_id] = flagged
 
-    log(f"Prepared {len(id_to_flagged)} items for batch inference ({skipped} skipped)")
+    logger.info("Prepared %d items for batch inference (%d skipped)", len(id_to_flagged), skipped)
     return id_to_flagged
 
 
@@ -351,16 +342,15 @@ def post_process_results(
             rec = "error"
         recommendations[rec] = recommendations.get(rec, 0) + 1
 
-    log("")
-    log("=" * 60)
-    log("JUDGE COMPLETE")
-    log(f"  Total judged:  {len(results)}")
-    log(f"  Remove:        {recommendations['remove']}")
-    log(f"  Flag:          {recommendations['flag']}")
-    log(f"  Keep:          {recommendations['keep']}")
-    log(f"  Errors:        {recommendations['error']}")
-    log(f"  Output:        {final_output}")
-    log("=" * 60)
+    logger.info("=" * 60)
+    logger.info("JUDGE COMPLETE")
+    logger.info("  Total judged:  %d", len(results))
+    logger.info("  Remove:        %d", recommendations['remove'])
+    logger.info("  Flag:          %d", recommendations['flag'])
+    logger.info("  Keep:          %d", recommendations['keep'])
+    logger.info("  Errors:        %d", recommendations['error'])
+    logger.info("  Output:        %s", final_output)
+    logger.info("=" * 60)
 
 
 async def run_batch_judge(args):
@@ -373,11 +363,11 @@ async def run_batch_judge(args):
             if line:
                 flagged_items.append(json.loads(line))
 
-    log(f"Loaded {len(flagged_items)} flagged items")
+    logger.info("Loaded %d flagged items", len(flagged_items))
 
     if args.limit:
         flagged_items = flagged_items[:args.limit]
-        log(f"Limited to {len(flagged_items)} items")
+        logger.info("Limited to %d items", len(flagged_items))
 
     # Step 1: Prepare batch input
     output_dir = os.path.dirname(args.output) or "."
@@ -388,11 +378,11 @@ async def run_batch_judge(args):
     id_to_flagged = prepare_batch_input(flagged_items, batch_input_path)
 
     if not id_to_flagged:
-        log("No items to judge after preparation")
+        logger.info("No items to judge after preparation")
         return
 
     # Step 2: Batch inference using nano-eval's OnlineBatchInferenceEngine
-    log(f"Starting batch inference with concurrency={args.concurrency}")
+    logger.info("Starting batch inference with concurrency=%d", args.concurrency)
     config = APIConfig(
         api_key=args.judge_api_key,
         base_url=args.judge_api_base.rstrip("/"),
@@ -412,7 +402,7 @@ async def run_batch_judge(args):
     await engine.run(batch_input_path, batch_output_path, sampling_params)
 
     # Step 3: Post-process results
-    log("Post-processing inference results...")
+    logger.info("Post-processing inference results...")
     post_process_results(batch_output_path, id_to_flagged, args.output, args.judge_model)
 
     # Clean up temp files
@@ -422,6 +412,9 @@ async def run_batch_judge(args):
 
 
 def main():
+    from nanoeval.utils.logging_utils import configure_logger
+    configure_logger()
+
     parser = argparse.ArgumentParser(description="LLM Judge for flagged lazy training data")
     parser.add_argument("--input", required=True, help="Input flagged.jsonl from scan_rules.py")
     parser.add_argument("--output", required=True, help="Output judged.jsonl")

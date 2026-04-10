@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, Set, List, Callable, Tuple
 from tqdm.asyncio import tqdm
 from .base import BaseSGLangEngine
 
-logger = logging.getLogger("BatchInference")
+logger = logging.getLogger(__name__)
 
 class BatchInferenceEngine(BaseSGLangEngine):
     """
@@ -37,6 +37,14 @@ class BatchInferenceEngine(BaseSGLangEngine):
         return self
 
     # ------------------------- Helper ------------------------
+
+    def _resolve_prompt(self, item: dict) -> str:
+        """Resolve prompt from item, supporting both 'prompt' and 'messages' formats."""
+        if "messages" in item and self.tokenizer:
+            return self.tokenizer.apply_chat_template(
+                item["messages"], tokenize=False, add_generation_prompt=True
+            )
+        return item["prompt"]
 
     @staticmethod
     def _count_lines_fast(file_path: str) -> int:
@@ -85,7 +93,8 @@ class BatchInferenceEngine(BaseSGLangEngine):
             try:
                 start_t = time.perf_counter()
                 # Call the robust generation method from Base Class
-                output = await self._generate_safe(item["prompt"], sampling_params)
+                prompt = self._resolve_prompt(item)
+                output = await self._generate_safe(prompt, sampling_params)
                 
                 item["response"] = output["text"]
                 item["_stats"] = self._extract_stats(output)
@@ -179,7 +188,7 @@ class BatchInferenceEngine(BaseSGLangEngine):
             try:
                 start_t = time.perf_counter()
                 conversation: List[str] = []
-                prompt = item["prompt"]
+                prompt = self._resolve_prompt(item)
                 total_stats = {"prompt": 0, "completion": 0, "total": 0}
                 messages: dict = {}
                 

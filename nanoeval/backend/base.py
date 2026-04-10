@@ -7,9 +7,7 @@ import sglang as sgl
 from typing import Optional, Dict, Any
 from transformers import AutoTokenizer
 
-# Configure Logger
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("SGLangBase")
+logger = logging.getLogger(__name__)
 
 
 def _patch_resource_tracker():

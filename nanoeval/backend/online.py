@@ -17,15 +17,7 @@ except ImportError:
     def tqdm(iterable=None, **kwargs):
         return iterable
 
-# ------------------------- Configuration ------------------------
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S",
-    stream=sys.stderr
-)
-logger = logging.getLogger("OnlineInference")
+logger = logging.getLogger(__name__)
 
 
 def _extract_message_content_and_reasoning(response: Dict[str, Any]) -> tuple[str, Optional[str]]:
@@ -54,6 +46,58 @@ def _build_request_messages(item: Dict[str, Any], system_prompt: str = "") -> Li
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt_text})
     return messages
+
+
+class ToolResponseMatcher:
+    """Match model tool calls to pre-recorded responses from a pool.
+
+    Matching priority:
+    1. Exact match  — tool_name + arguments exact match
+    2. Name match   — same tool_name, return first matching response
+    3. Fallback     — generic "no result" response
+
+    Input format for tool_responses:
+    [
+        {"name": "Read", "arguments": {"file_path": "/a.txt"}, "response": "content..."},
+        {"name": "Search", "arguments": {"query": "test"}, "response": "results..."},
+    ]
+    """
+
+    def __init__(self, tool_responses: List[Dict[str, Any]]):
+        # Exact index: (name, args_json) -> response
+        self._exact: Dict[str, str] = {}
+        # Name index: name -> [responses]
+        self._by_name: Dict[str, List[str]] = {}
+
+        for entry in tool_responses:
+            name = entry.get("name", "")
+            args = entry.get("arguments", {})
+            response = str(entry.get("response", ""))
+
+            # Exact key: deterministic JSON serialization of arguments
+            args_key = json.dumps(args, sort_keys=True, ensure_ascii=False)
+            exact_key = f"{name}::{args_key}"
+            self._exact[exact_key] = response
+
+            if name not in self._by_name:
+                self._by_name[name] = []
+            self._by_name[name].append(response)
+
+    def match(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+        """Find the best matching response for a tool call."""
+        args_key = json.dumps(arguments, sort_keys=True, ensure_ascii=False)
+        exact_key = f"{tool_name}::{args_key}"
+
+        # 1. Exact match
+        if exact_key in self._exact:
+            return self._exact[exact_key]
+
+        # 2. Name match — return first available
+        if tool_name in self._by_name and self._by_name[tool_name]:
+            return self._by_name[tool_name][0]
+
+        # 3. Fallback
+        return f"[No matching response for tool '{tool_name}']"
 
 @dataclass
 class APIConfig:
@@ -239,6 +283,112 @@ class OnlineBatchInferenceEngine:
                 self.output_queue.task_done()
         pbar.close()
 
+    # ------------------------- Agent Loop Worker ------------------------
+
+    async def _agent_loop_worker(
+        self, client: AsyncClient, sampling_params: Dict[str, Any], max_turns: int
+    ):
+        """Multi-turn agent worker with built-in tool response matching.
+
+        Each input item should have:
+        - "messages": conversation messages
+        - "tools": (optional) tool definitions in OpenAI format
+        - "tool_responses": (optional) pre-recorded tool responses for matching
+        """
+        while True:
+            item = await self.input_queue.get()
+            if item is None:
+                self.input_queue.task_done()
+                break
+
+            async with self.sem:
+                start_t = time.perf_counter()
+                try:
+                    messages = list(item.get("messages", []))
+                    tools = item.get("tools")
+                    matcher = ToolResponseMatcher(item.get("tool_responses", []))
+                    all_turns = []
+                    exit_reason = "max_turns"
+                    last_response = {}
+
+                    # Build base sampling params (exclude __system_prompt)
+                    effective_params = {
+                        k: v for k, v in sampling_params.items()
+                        if k != "__system_prompt"
+                    }
+
+                    for turn in range(max_turns):
+                        # Build payload
+                        payload = {
+                            "model": self.api_config.model,
+                            "messages": messages,
+                        }
+                        payload.update(effective_params)
+
+                        if tools:
+                            payload["tools"] = tools
+                            payload["tool_choice"] = "auto"
+
+                        # Execute
+                        last_response = await client.post_request(payload)
+
+                        choices = last_response.get("choices") or []
+                        if not choices:
+                            exit_reason = "empty_response"
+                            break
+
+                        message = choices[0].get("message", {})
+                        messages.append(message)
+                        all_turns.append(message)
+
+                        tool_calls = message.get("tool_calls", [])
+                        if not tool_calls:
+                            exit_reason = "completed"
+                            break
+
+                        # Process tool calls — match responses from pool
+                        for tc in tool_calls:
+                            func = tc.get("function", {})
+                            tool_name = func.get("name", "")
+                            try:
+                                arguments = json.loads(func.get("arguments", "{}"))
+                            except json.JSONDecodeError:
+                                arguments = {}
+
+                            result = matcher.match(tool_name, arguments)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "content": result,
+                            })
+
+                    # Write results
+                    content = ""
+                    reasoning = None
+                    if all_turns:
+                        last_msg = all_turns[-1]
+                        content = last_msg.get("content") or ""
+                        reasoning = last_msg.get("reasoning") or last_msg.get("reasoning_content")
+                        if isinstance(reasoning, str):
+                            reasoning = reasoning.strip() or None
+
+                    item["response"] = content
+                    if reasoning:
+                        item["thinking"] = reasoning
+                    item["turns"] = len(all_turns)
+                    item["exit_reason"] = exit_reason
+                    item["usage"] = last_response.get("usage", {})
+                    item["_latency"] = round(time.perf_counter() - start_t, 3)
+                    item["_status"] = "success"
+
+                except Exception as e:
+                    logger.error(f"Agent loop failed for ID {item.get('id', 'unknown')}: {e}")
+                    item["_error"] = str(e)
+                    item["_status"] = "failed"
+
+                await self.output_queue.put(item)
+                self.input_queue.task_done()
+
     # ------------------------- Main Run Interface ------------------------
 
     async def run(
@@ -286,9 +436,69 @@ class OnlineBatchInferenceEngine:
             
             for w in workers: w.cancel()
 
+    async def run_agent_loop(
+        self,
+        input_file: str,
+        output_file: str,
+        sampling_params: Dict[str, Any],
+        max_turns: int = 10,
+    ):
+        """Multi-turn agent loop with tool calling.
+
+        Input JSONL format:
+        {
+            "id": "test_1",
+            "messages": [{"role": "system", "content": "..."}, ...],
+            "tools": [{"type": "function", "function": {...}}],          # optional
+            "tool_responses": [{"name": "Read", "arguments": {...}, "response": "..."}]  # optional
+        }
+
+        Each item carries its own tool_responses pool. The engine uses
+        ToolResponseMatcher to find the best match for each tool call the
+        model makes.
+        """
+        # Resume Logic
+        existing_ids = set()
+        if os.path.exists(output_file):
+            with open(output_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try: existing_ids.add(json.loads(line).get("id"))
+                    except: pass
+
+        total_lines = 0
+        if input_file != '-':
+            try: total_lines = int(os.popen(f'wc -l {input_file}').read().split()[0])
+            except: pass
+        remaining = max(0, total_lines - len(existing_ids))
+
+        logger.info(f"Agent loop: max_turns={max_turns}, sampling={sampling_params}")
+
+        async with AsyncClient(self.api_config) as client:
+            tasks = [
+                asyncio.create_task(self._producer(input_file, existing_ids)),
+                asyncio.create_task(self._writer(output_file, remaining if input_file != '-' else None))
+            ]
+
+            workers = [
+                asyncio.create_task(
+                    self._agent_loop_worker(client, sampling_params, max_turns)
+                )
+                for _ in range(self.concurrency)
+            ]
+
+            await tasks[0]  # Wait producer
+            await self.input_queue.join()
+            await self.output_queue.put(None)  # Stop writer
+            await tasks[1]  # Wait writer
+
+            for w in workers: w.cancel()
+
 # ------------------------- CLI Entry Point ------------------------
 
 def main():
+    from nanoeval.utils.logging_utils import configure_logger
+    configure_logger()
+
     parser = argparse.ArgumentParser(description="Online Inference with Unified Sampling Params")
     
     # Connection Args
@@ -310,6 +520,10 @@ def main():
     
     # Advanced: Allow passing a raw JSON string for obscure params (e.g. frequency_penalty)
     parser.add_argument("--extra-params", type=str, default="{}", help="JSON string for extra sampling params")
+
+    # Agent loop mode
+    parser.add_argument("--agent-loop", action="store_true", help="Enable multi-turn agent loop with tool calling")
+    parser.add_argument("--max-turns", type=int, default=10, help="Max turns per conversation in agent loop mode")
 
     args = parser.parse_args()
 
@@ -349,7 +563,13 @@ def main():
 
     # 3. Run
     try:
-        asyncio.run(engine.run(args.input, args.output, sampling_params))
+        if args.agent_loop:
+            asyncio.run(engine.run_agent_loop(
+                args.input, args.output, sampling_params,
+                max_turns=args.max_turns,
+            ))
+        else:
+            asyncio.run(engine.run(args.input, args.output, sampling_params))
     except KeyboardInterrupt:
         pass
 
