@@ -103,6 +103,7 @@ def prepare_eval_input(
     output_path: Path,
     chat_template_model_path: str | None = None,
     system_prompt: str | None = None,
+    max_examples: int | None = None,
 ) -> Dict[str, Any]:
     import logging
     logging.info("prepare_eval_input: system_prompt=%r", system_prompt)
@@ -145,6 +146,8 @@ def prepare_eval_input(
             raise ValueError(f"Missing pass-k for task: {task_name}")
         task_file = resolve_task_file(task_name=task_name, task_dir=task_dir)
         rows = load_jsonl_records(task_file)
+        if max_examples is not None:
+            rows = rows[:max_examples]
         expanded_rows = expand_records_for_pass_k(
             task_name=task_name,
             rows=rows,

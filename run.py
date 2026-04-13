@@ -115,6 +115,11 @@ def main():
     p.add_argument("--ray-address", type=str, default="auto")
     p.add_argument("--resume", action="store_true")
 
+    # Debug
+    p.add_argument("--max-examples", type=int, default=None,
+                   help="Limit the number of examples per task (before pass@k expansion). "
+                        "Useful for quick debugging on large datasets.")
+
     # Score
     p.add_argument("--n-proc", type=int, default=32)
 
@@ -149,6 +154,7 @@ def main():
             output_path=prepared,
             chat_template_model_path=chat_template_path,
             system_prompt=a.system_prompt,
+            max_examples=a.max_examples,
         ))
         log.info("[preprocess] done: %s", summary)
 
