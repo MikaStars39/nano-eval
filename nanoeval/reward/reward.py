@@ -1,8 +1,6 @@
 from typing import Dict
 from importlib import import_module
 
-from .math.math_verify_reward import math_judge
-
 # ----------------------- IMPORTANT: judge router -----------------------
 # rule-based judge router that manage the judging process
 
@@ -40,6 +38,8 @@ def judge_router(
         prompt = kwargs.get("prompt", "")
         return table_process_results(prompt, response, label)
     else:
+        from .math.math_verify_reward import math_judge
+
         #
         # math return:
         # return {
