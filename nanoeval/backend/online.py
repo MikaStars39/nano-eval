@@ -206,7 +206,7 @@ class OnlineBatchInferenceEngine:
                     effective_sampling_params = {
                         key: value
                         for key, value in sampling_params.items()
-                        if key != "__system_prompt"
+                        if key not in ("__system_prompt", "chat_template_kwargs")
                     }
                     
                     payload = {
@@ -311,10 +311,10 @@ class OnlineBatchInferenceEngine:
                     exit_reason = "max_turns"
                     last_response = {}
 
-                    # Build base sampling params (exclude __system_prompt)
+                    # Build base sampling params (exclude internal keys)
                     effective_params = {
                         k: v for k, v in sampling_params.items()
-                        if k != "__system_prompt"
+                        if k not in ("__system_prompt", "chat_template_kwargs")
                     }
 
                     for turn in range(max_turns):

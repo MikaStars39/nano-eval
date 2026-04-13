@@ -40,7 +40,6 @@ NanoEval/
 │   │   ├── base.py             # Base SGLang engine with lifecycle management
 │   │   ├── offline.py          # Local batch inference (SGLang)
 │   │   ├── online.py         # API-based inference (OpenAI-compatible)
-│   │   ├── online_ray.py     # Distributed inference with Ray
 │   │   └── runner.py         # Backend router
 │   ├── reward/                # Scoring and verification
 │   │   ├── score.py          # Main scoring orchestrator
@@ -123,7 +122,6 @@ sampling_params = {
 |---------|----------|-------------------|
 | `offline` | Local GPU inference | `max_inflight` async workers |
 | `online` | Remote API calls | `concurrency` semaphore-limited tasks |
-| `online_ray` | Distributed API calls | Ray actors × worker concurrency |
 
 ---
 
@@ -141,9 +139,6 @@ pip install -r requirements.txt
 
 # For offline backend (SGLang)
 pip install sglang flashinfer
-
-# For online_ray backend
-pip install ray
 ```
 
 ### Minimal Offline Evaluation
@@ -314,44 +309,6 @@ ROLLOUT_ARGS=(
   --concurrency 1024
 )
 ```
-
-### Online Ray Backend (Distributed)
-
-For high-throughput distributed API inference using Ray.
-
-**Key Arguments:**
-```bash
---backend online_ray
---api-key "YOUR_API_KEY"
---base-url "http://host:port/v1"
---model "model-name"
---concurrency 256                    # Total concurrency
---ray-num-actors 8                 # Number of Ray actors
---ray-worker-concurrency 32          # Concurrency per actor
---online-stall-log-interval-s 60   # Progress heartbeat
-```
-
-**Architecture:**
-```
-Total Concurrency = ray-num-actors × ray-worker-concurrency
-```
-
-**Example:**
-```bash
-ROLLOUT_ARGS=(
-  --backend online_ray
-  --concurrency 256
-  --ray-num-actors 8
-  --ray-worker-concurrency 32
-  --online-request-timeout-s 3600
-  --online-stall-log-interval-s 60
-)
-```
-
-**When to use:**
-- High-latency APIs where single-process async is insufficient
-- Handling thousands of concurrent requests
-- Better fault tolerance (per-actor isolation)
 
 ---
 
@@ -554,7 +511,6 @@ TASK_TO_JSONL = {
 - [ ] Is GPU utilization at 100%? (`nvidia-smi`)
 - [ ] Is `--concurrency` high enough?
 - [ ] For online: Is API latency the bottleneck?
-- [ ] Try `online_ray` for high-latency APIs
 
 ### Issue: Resume Not Working
 

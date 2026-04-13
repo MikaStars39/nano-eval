@@ -41,7 +41,8 @@ python3 recipes/context_rot/eval/report.py --input /path/to/results.jsonl
 export API_KEY=sk-xxx API_BASE=https://... MODEL=MiniMax-M2.7
 export JUDGE_API_KEY=sk-xxx JUDGE_API_BASE=https://... JUDGE_MODEL=gpt-5.3-codex
 export EVAL_SET=/path/to/eval_set.jsonl
-bash recipes/context_rot/distance/run_experiment.sh both "case_0_P1,case_2_P1" "0,50,100,200"
+export EXPERIMENT=both FILTER_IDS="case_0_P1,case_2_P1" PADDING_LEVELS="0,50,100,200"
+bash recipes/context_rot/distance/run_experiment.sh
 ```
 
 ### 3. data_scan/ — 训练数据质量扫描
@@ -52,11 +53,13 @@ bash recipes/context_rot/distance/run_experiment.sh both "case_0_P1,case_2_P1" "
 
 ```bash
 # Phase 1（不需要 API）
-bash recipes/context_rot/data_scan/run_scan.sh --input-list /path/to/filelist.txt
+export INPUT_LIST=/path/to/filelist.txt
+bash recipes/context_rot/data_scan/run_scan.sh
 
-# Phase 1 + Phase 2
+# Phase 1 + Phase 2（设置 JUDGE_MODEL 即触发 Phase 2）
+export INPUT_LIST=/path/to/filelist.txt
 export JUDGE_API_KEY=sk-xxx JUDGE_API_BASE=https://... JUDGE_MODEL=gpt-5.3-codex
-bash recipes/context_rot/data_scan/run_scan.sh --input-list /path/to/filelist.txt --phase2
+bash recipes/context_rot/data_scan/run_scan.sh
 ```
 
 ## 数据准备

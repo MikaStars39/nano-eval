@@ -40,7 +40,6 @@ NanoEval/
 │   │   ├── base.py             # SGLang 引擎基类，管理生命周期
 │   │   ├── offline.py          # 本地批量推理 (基于 SGLang)
 │   │   ├── online.py         # API 在线推理 (兼容 OpenAI 接口)
-│   │   ├── online_ray.py     # 基于 Ray 的分布式推理
 │   │   └── runner.py         # 后端路由选择器
 │   ├── reward/                # 评分与验证模块
 │   │   ├── score.py          # 评分主控器
@@ -130,7 +129,6 @@ sampling_params = {
 | ------------ | ---------- | -------------------- |
 | `offline`    | 本地 GPU 推理  | `max_inflight` 异步工作器 |
 | `online`     | 远程 API 调用  | `concurrency` 信号量限制  |
-| `online_ray` | 分布式 API 调用 | Ray actors × 工作器并发   |
 
 
 ---
@@ -329,48 +327,6 @@ ROLLOUT_ARGS=(
   --concurrency 1024
 )
 ```
-
-### Ray 分布式在线后端
-
-用于高吞吐分布式 API 推理，基于 Ray 框架。
-
-**关键参数：**
-
-```bash
---backend online_ray
---api-key "YOUR_API_KEY"
---base-url "http://host:port/v1"
---model "model-name"
---concurrency 256                    # 总并发数
---ray-num-actors 8                 # Ray actor 数量
---ray-worker-concurrency 32          # 每个 actor 的并发数
---online-stall-log-interval-s 60   # 进度心跳日志间隔
-```
-
-**并发计算公式：**
-
-```
-总并发数 = ray-num-actors × ray-worker-concurrency
-```
-
-**完整示例：**
-
-```bash
-ROLLOUT_ARGS=(
-  --backend online_ray
-  --concurrency 256
-  --ray-num-actors 8
-  --ray-worker-concurrency 32
-  --online-request-timeout-s 3600
-  --online-stall-log-interval-s 60
-)
-```
-
-**适用场景：**
-
-- 高延迟 API，单进程异步不够
-- 需要处理数千并发请求
-- 需要更好的容错能力（actor 隔离）
 
 ---
 
@@ -583,7 +539,6 @@ TASK_TO_JSONL = {
 - GPU 利用率是否 100%？（`nvidia-smi` 查看）
 - `--concurrency` 是否足够高？
 - 在线模式：API 延迟是否是瓶颈？
-- 尝试 `online_ray` 应对高延迟 API
 
 ### 问题：断点续跑失效
 

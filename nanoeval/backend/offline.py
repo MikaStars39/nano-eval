@@ -173,9 +173,9 @@ class BatchInferenceEngine(BaseSGLangEngine):
     # ------------------------- Multi-Turn Support ------------------------
 
     async def _multi_turn_worker(
-        self, 
-        sampling_params: dict, 
-        turn_callback: Callable[[List[str], str], Tuple[bool, Optional[str]]],
+        self,
+        sampling_params: dict,
+        turn_callback: Callable[[List[str], dict], Tuple[bool, Optional[str], dict]],
         max_turns: int
     ):
         """Handles multi-turn conversation for a single item."""
@@ -221,7 +221,7 @@ class BatchInferenceEngine(BaseSGLangEngine):
         input_file: str, 
         output_file: str, 
         sampling_params: dict,
-        turn_callback: Callable[[List[str], str], Tuple[bool, Optional[str]]],
+        turn_callback: Callable[[List[str], dict], Tuple[bool, Optional[str], dict]],
         max_turns: int = 10,
         resume: bool = False
     ):
@@ -229,8 +229,8 @@ class BatchInferenceEngine(BaseSGLangEngine):
         Multi-turn inference pipeline.
         
         Args:
-            turn_callback: (conversation_history, latest_response) -> (should_continue, next_prompt)
-                           Return (False, None) to stop, (True, prompt) to continue.
+            turn_callback: (conversation_history, messages_dict) -> (should_continue, next_prompt, updated_messages)
+                           Return (False, None, {}) to stop, (True, prompt, messages) to continue.
             max_turns: Maximum turns per conversation to prevent infinite loops.
         """
         # 1. Resume Logic

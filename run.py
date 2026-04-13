@@ -68,10 +68,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         for field_name, field_value in optional_sampling_fields:
             if field_value is not None:
                 sampling_params[field_name] = field_value
-        if args.system_prompt and args.backend in {"online", "online_ray"}:
+        if args.system_prompt and args.backend == "online":
             sampling_params["__system_prompt"] = args.system_prompt
         if args.enable_thinking is not None:
-            if args.backend in {"online", "online_ray"}:
+            if args.backend == "online":
                 sampling_params["chat_template_kwargs"] = {
                     "enable_thinking": args.enable_thinking
                 }
@@ -93,10 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_url=args.base_url,
             model=args.model,
             concurrency=args.concurrency,
-            ray_num_actors=args.ray_num_actors,
-            ray_worker_concurrency=args.ray_worker_concurrency,
-            online_request_timeout_s=args.online_request_timeout_s,
-            online_stall_log_interval_s=args.online_stall_log_interval_s,
+            agent_loop=args.agent_loop,
+            max_turns=args.max_turns,
         )
         final_summary["step02"] = step02_summary
         logging.info("Step 2 completed: %s", step02_summary)

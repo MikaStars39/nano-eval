@@ -63,6 +63,7 @@ class BaseSGLangEngine:
         tp_size: int = 1,
         mem_fraction_static: float = 0.90,
         enable_radix_cache: bool = False,
+        enable_dp_attention: bool = False,
         # Speculative Decoding Config
         speculative_algorithm: Optional[str] = None,
         speculative_draft_model_path: Optional[str] = None,
@@ -72,7 +73,7 @@ class BaseSGLangEngine:
     ):
         # ------------------------- Configuration ------------------------
         self.model_path = model_path
-        
+
         # Engine arguments
         self.engine_args = {
             "model_path": model_path,
@@ -83,6 +84,9 @@ class BaseSGLangEngine:
             "trust_remote_code": True,
             "log_level": "error",  # Keep quiet by default
         }
+
+        if enable_dp_attention:
+            self.engine_args["enable_dp_attention"] = True
 
         # Speculative arguments
         self.spec_args = {

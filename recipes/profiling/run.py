@@ -8,9 +8,7 @@ Usage:
 """
 
 import argparse
-import asyncio
 import json
-import math
 import os
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool
@@ -20,7 +18,9 @@ from typing import Optional
 import ray
 from transformers import AutoTokenizer
 
-from nanoeval.reward.score import eval_results
+from nanoeval.ray import init_ray
+from nanoeval.ray.actors import OfflineInferenceActor, ScoringActor
+from nanoeval.ray.utils import shard_jsonl, merge_jsonl
 
 
 # ------------------------ Step 1: Preprocess ------------------------
@@ -67,80 +67,10 @@ def _preprocess(
     print(f"[preprocess] {total} entries -> {output_file}")
 
 
-# ------------------------ Step 2: Ray Inference ------------------------
-
-def _split(
-    input_file: str, 
-    num_shards: int, 
-    out_dir: str
-) -> list[str]:
-
-    os.makedirs(out_dir, exist_ok=True)
-    lines = Path(input_file).read_text("utf-8").splitlines()
-    size = math.ceil(len(lines) / num_shards)
-    paths = []
-    for i in range(num_shards):
-        chunk = lines[i * size:(i + 1) * size]
-        if not chunk:
-            continue
-        p = os.path.join(out_dir, f"shard_{i:05d}.jsonl")
-        Path(p).write_text("\n".join(chunk) + "\n", "utf-8")
-        paths.append(p)
-    return paths
-
-
-def _merge(
-    shard_paths: list[str], 
-    output_file: str
-) -> int:
-
-    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-    n = 0
-    with open(output_file, "w", encoding="utf-8") as fout:
-        for p in sorted(shard_paths):
-            if not os.path.exists(p):
-                continue
-            with open(p, "r", encoding="utf-8") as fin:
-                for line in fin:
-                    if line.strip():
-                        fout.write(line if line.endswith("\n") else line + "\n")
-                        n += 1
-    return n
-
-
-@ray.remote(num_gpus=1)
-def _run_shard(
-    shard_in: str, 
-    shard_out: str, 
-    model_path: str,
-    tp: int, 
-    dp: int, 
-    max_inflight: int, 
-    mem_frac: float,
-    dp_attn: bool, 
-    sampling: dict, 
-    resume: bool
-) -> str:
-
-    from nanoeval.backend.offline import BatchInferenceEngine
-
-    async def _go():
-        engine_kwargs = dict(
-            model_path=model_path, tp_size=tp, dp_size=dp,
-            max_inflight=max_inflight, mem_fraction_static=mem_frac,
-        )
-        if dp_attn:
-            engine_kwargs["enable_dp_attention"] = True
-        async with BatchInferenceEngine(**engine_kwargs) as engine:
-            await engine.run(input_file=shard_in, output_file=shard_out,
-                             sampling_params=sampling, resume=resume)
-    asyncio.run(_go())
-    return shard_out
-
-
 # ------------------------ Step 3: Score ------------------------
 
 def _score(inference_output: str, score_output: str, final_output: str, n_proc: int):
+    from nanoeval.reward.score import eval_results
     metrics = eval_results(
         eval_output_file=Path(inference_output),
         score_output_file=Path(score_output),
@@ -252,25 +182,31 @@ def main():
         if not a.model_path:
             raise ValueError("--model-path required for inference")
         shards_dir = os.path.join(od, "shards")
-        shard_inputs = _split(prepared, a.num_nodes, os.path.join(shards_dir, "input"))
+        shard_inputs = shard_jsonl(prepared, a.num_nodes, os.path.join(shards_dir, "input"))
         print(f"[split] {len(shard_inputs)} shards")
 
-        ray.init(address=a.ray_address)
+        init_ray(address=a.ray_address)
         sampling = {"temperature": a.temperature, "top_p": a.top_p, "max_new_tokens": a.max_new_tokens}
         out_dir = os.path.join(shards_dir, "output")
         os.makedirs(out_dir, exist_ok=True)
 
+        num_gpus = a.tp_size * a.dp_size
         futures = []
         for i, si in enumerate(shard_inputs):
             so = os.path.join(out_dir, f"shard_{i:05d}.jsonl")
-            f = _run_shard.options(num_gpus=a.tp_size * a.dp_size).remote(
-                si, so, a.model_path, a.tp_size, a.dp_size, a.max_inflight,
-                a.mem_fraction_static, a.enable_dp_attention, sampling, a.resume)
-            futures.append(f)
+            actor = OfflineInferenceActor.options(num_gpus=num_gpus).remote(
+                model_path=a.model_path,
+                tp_size=a.tp_size,
+                dp_size=a.dp_size,
+                max_inflight=a.max_inflight,
+                mem_fraction_static=a.mem_fraction_static,
+                enable_dp_attention=a.enable_dp_attention,
+            )
+            futures.append(actor.run.remote(si, so, sampling, resume=a.resume))
 
-        print(f"[ray] dispatched {len(futures)} tasks, waiting...")
+        print(f"[ray] dispatched {len(futures)} actors, waiting...")
         shard_outputs = ray.get(futures)
-        total = _merge(shard_outputs, inference_out)
+        total = merge_jsonl(shard_outputs, inference_out)
         print(f"[merge] {total} lines -> {inference_out}")
         ray.shutdown()
 

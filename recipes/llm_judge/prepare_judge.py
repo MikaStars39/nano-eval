@@ -67,10 +67,12 @@ Please score strictly according to the above format.
 
 # Global tokenizer for worker processes
 _tokenizer = None
+_n_examples = None
 
-def init_worker(tokenizer_name):
-    global _tokenizer
+def init_worker(tokenizer_name, n_examples):
+    global _tokenizer, _n_examples
     _tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    _n_examples = n_examples
 
 def process_line(line_data):
     line_idx, line = line_data
@@ -110,7 +112,7 @@ def process_line(line_data):
     
     results = []
     # Process each model output (blank_output_0 to blank_output_7, 8 outputs total)
-    for output_idx in range(n_examples):
+    for output_idx in range(_n_examples):
         output_key = f"blank_output_{output_idx}"
         model_answer = data.get(output_key, "")
         
@@ -176,7 +178,7 @@ def prepare_judge_data(input_file, output_file, tokenizer_name, num_workers=None
          open(output_file, 'w', encoding='utf-8') as f_out:
         
         # Create a pool of workers
-        with Pool(processes=num_workers, initializer=init_worker, initargs=(tokenizer_name,)) as pool:
+        with Pool(processes=num_workers, initializer=init_worker, initargs=(tokenizer_name, n_examples)) as pool:
             # Enumerate lines for processing
             line_iterator = enumerate(f_in)
             
