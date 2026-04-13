@@ -5,6 +5,10 @@ export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 WORKDIR="${REPO_ROOT}/outputs/mmmlu_online_${TIMESTAMP}"
+MODEL_NAME="MiniMax-M2.5"
+BASE_URL="https://api.minimaxi.com/v1"
+
+mkdir -p "${WORKDIR}"
 
 python "${REPO_ROOT}/run.py" \
   --tasks "mmmlu@1" \
@@ -19,7 +23,8 @@ python "${REPO_ROOT}/run.py" \
   --top-p 0.95 \
   --enable-thinking true \
   --max-tokens 32768 \
-  --concurrency 1024 \
+  --concurrency 4 \
   --n-proc 32 \
   --num-actors "${NUM_ACTORS:-1}" \
+  --max-examples 100 \
   --ray-address "${RAY_ADDRESS:-auto}" 2>&1 | tee "${WORKDIR}/run.log"
