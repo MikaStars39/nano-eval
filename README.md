@@ -13,7 +13,7 @@
 
 NanoEval 是一个轻量高性能的 LLM 评测工具，采用三阶段流水线架构：**输入准备 → 推理 → 评分**，全部通过 Ray 分布式调度。
 
-详细使用指南见 [`docs/evaluation_guide_zh.md`](docs/evaluation_guide_zh.md)（[English](docs/evaluation_guide.md)）。
+详细使用指南见 [`docs/evaluation.md`](docs/evaluation.md)。
 
 ## Quick Start
 

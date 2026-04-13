@@ -4,7 +4,7 @@
 
 NanoEval 是一个轻量高性能的 LLM 评测工具，同时也兼具数据高效生产、数据处理清洗等功能。
 
-> 本文件描述项目整体结构、核心约定和禁区。评测流水线细节见 `docs/evaluation.md`。
+> 本文件描述项目整体结构、核心约定和禁区。CLI 参数、输出格式、性能调优等评测细节见 `docs/evaluation.md`。
 
 ## Entry Map
 
@@ -43,9 +43,7 @@ recipes/                   # 实验脚本和任务专用代码
     distance/              #   SP/Query 距离敏感性实验
     data_scan/             #   训练数据偷懒模式扫描
 docs/                      # 文档
-  evaluation.md            # 评测流水线详细说明
-  evaluation_guide.md      # 完整使用指南（英文）
-  evaluation_guide_zh.md   # 完整使用指南（中文）
+  evaluation.md            # 评测参考（CLI 参数、输出格式、调优、排错）
 ```
 
 ## Quick Commands
