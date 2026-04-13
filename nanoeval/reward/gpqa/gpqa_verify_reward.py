@@ -1,6 +1,7 @@
 import re
+from typing import Optional
 
-def extract_answer(text: str) -> str:
+def extract_answer(text: str) -> Optional[str]:
     """Extract answer from model response using regex (boxed or last value)."""
     if not text:
         return ""
@@ -65,7 +66,9 @@ def gpqa_judge(
             "pass": True
         }
     else:
-        if label.lower() in pred_ans.lower():
+        pred_normalized = pred_ans.strip().strip("()").strip().upper()
+        label_normalized = label.strip().strip("()").strip().upper()
+        if pred_normalized == label_normalized:
             return {
                 "pred": pred_ans,
                 "pass": True

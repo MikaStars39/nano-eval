@@ -67,6 +67,13 @@ def _split_response_and_thinking(response: str, existing_thinking: object = None
         ("<|end_of_thought|>", True),
     ]
 
+    # Handle <think>...</think> format (e.g., DeepSeek models)
+    think_match = _THINK_BLOCK_PATTERN.search(text)
+    if think_match:
+        thinking = think_match.group(0).strip()
+        response_text = _THINK_BLOCK_PATTERN.sub("", text).strip()
+        return response_text, thinking
+
     for pattern, include_in_thinking in split_patterns:
         idx = text.find(pattern)
         if idx != -1:

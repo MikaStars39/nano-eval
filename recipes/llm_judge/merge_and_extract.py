@@ -16,7 +16,6 @@ def clean_think_blocks(text):
     patterns = [
         r'<think>.*?</think>',
         r'<\|begin_of_thought\|>.*?<\|end_of_thought\|>',
-        r'.*?\n\n',  # Common think block pattern
     ]
     for pattern in patterns:
         text = re.sub(pattern, '', text, flags=re.DOTALL)

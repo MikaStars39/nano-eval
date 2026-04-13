@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Optional, Tuple
 
 import re
 try:
@@ -10,7 +10,7 @@ except ImportError:
         "Please install it: pip install math_verify"
     )
 
-def extract_answer(text: str) -> str:
+def extract_answer(text: str) -> Optional[str]:
     """Extract answer from model response using regex (boxed or last value)."""
     if not text:
         return ""

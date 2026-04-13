@@ -146,6 +146,7 @@ class AsyncClient:
         """
         url = f"{self.config.base_url}/chat/completions"
         retry_delay = 1.0
+        max_retry_delay = 60.0
 
         for attempt in range(self.config.max_retries + 1):
             try:
@@ -157,7 +158,7 @@ class AsyncClient:
                     if response.status in [429, 500, 502, 503, 504]:
                         # Optional: Parse Retry-After header
                         await asyncio.sleep(retry_delay)
-                        retry_delay *= 2 
+                        retry_delay = min(retry_delay * 2, max_retry_delay)
                         continue
                     
                     # Hard fail on 400/401
@@ -167,7 +168,7 @@ class AsyncClient:
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 logger.warning(f"Network error: {str(e)}. Retrying...")
                 await asyncio.sleep(retry_delay)
-                retry_delay *= 2
+                retry_delay = min(retry_delay * 2, max_retry_delay)
 
         raise RuntimeError(f"Failed after {self.config.max_retries} retries.")
 

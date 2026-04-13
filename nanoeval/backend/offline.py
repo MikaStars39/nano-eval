@@ -95,15 +95,17 @@ class BatchInferenceEngine(BaseSGLangEngine):
                 # Call the robust generation method from Base Class
                 prompt = self._resolve_prompt(item)
                 output = await self._generate_safe(prompt, sampling_params)
-                
+
                 item["response"] = output["text"]
                 item["_stats"] = self._extract_stats(output)
                 item["_latency"] = time.perf_counter() - start_t
-                
-                await self.output_queue.put(item)
+                item["_status"] = "success"
             except Exception as e:
                 logger.error(f"Worker Error: {e}")
+                item["_error"] = str(e)
+                item["_status"] = "failed"
             finally:
+                await self.output_queue.put(item)
                 self.input_queue.task_done()
 
     async def _writer(self, output_file: str, total_items: int, resume: bool):
@@ -191,29 +193,31 @@ class BatchInferenceEngine(BaseSGLangEngine):
                 prompt = self._resolve_prompt(item)
                 total_stats = {"prompt": 0, "completion": 0, "total": 0}
                 messages: dict = {}
-                
+
                 for _ in range(max_turns):
                     output = await self._generate_safe(prompt, sampling_params)
                     conversation.append(output)
-                    
+
                     # Accumulate stats
                     stats = self._extract_stats(output)
                     for k in total_stats: total_stats[k] += stats[k]
-                    
+
                     # Check if should continue
                     should_continue, next_prompt, messages = turn_callback(conversation, messages)
                     if not should_continue or next_prompt is None:
                         break
                     prompt = next_prompt
-                
+
                 item["responses"] = conversation
                 item["_stats"] = total_stats
                 item["_latency"] = time.perf_counter() - start_t
-                
-                await self.output_queue.put(item)
+                item["_status"] = "success"
             except Exception as e:
                 logger.error(f"MultiTurn Worker Error: {e}")
+                item["_error"] = str(e)
+                item["_status"] = "failed"
             finally:
+                await self.output_queue.put(item)
                 self.input_queue.task_done()
 
     async def run_multi_turn(
