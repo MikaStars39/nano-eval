@@ -217,6 +217,7 @@ class PreprocessActor:
         output_path: str,
         chat_template_model_path: Optional[str] = None,
         system_prompt: Optional[str] = None,
+        max_examples: Optional[int] = None,
     ) -> dict:
         """Prepare eval input. Returns a summary dict."""
         from pathlib import Path
@@ -230,4 +231,5 @@ class PreprocessActor:
             output_path=Path(output_path),
             chat_template_model_path=chat_template_model_path,
             system_prompt=system_prompt,
+            max_examples=max_examples,
         )
