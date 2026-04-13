@@ -17,7 +17,6 @@ def init_ray(address: str = "auto", **kwargs: Any) -> None:
     if ray.is_initialized():
         return
     ray.init(
-        address=address,
         ignore_reinit_error=True,
         include_dashboard=False,
         logging_level="ERROR",

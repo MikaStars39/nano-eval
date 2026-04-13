@@ -251,6 +251,7 @@ def main():
                      task, m.get("avg_k", 0), m.get("pass_k", 0))
 
     log.info("[done]")
+    ray.shutdown()
 
 
 if __name__ == "__main__":
