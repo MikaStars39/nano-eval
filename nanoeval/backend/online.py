@@ -130,7 +130,8 @@ class AsyncClient:
         self.session = aiohttp.ClientSession(
             connector=self.connector,
             headers=self.headers,
-            timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+            trust_env=True,
         )
         return self
 
