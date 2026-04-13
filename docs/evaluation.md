@@ -132,10 +132,86 @@ Agent loop 输入需包含 `messages`、`tools`、`tool_responses` 字段。
 |------|--------|
 | 数学竞赛 | `aime2024`, `aime2025`, `amc2023`, `math500`, `minerva`, `hmmt2025` |
 | 科学问答 | `gpqa_diamond` |
-| 多选题 | `mmlu`, `mmlu_pro`, `ceval` |
+| 多选题 | `mmlu`, `mmlu_pro`, `mmlu_prox`, `ceval` |
 | 指令跟随 | `ifeval`, `ifbench` |
 
 任务注册在 `nanoeval/utils/task.py:TASK_TO_JSONL`。
+
+## 添加新评测任务
+
+完整流程分四步：数据准备 → 注册任务 → 评分路由 → 上传数据。
+
+### Step 1: 数据准备
+
+将原始数据集（如 HuggingFace 上的公开数据）转换为 `--task-dir` 下的 JSONL 格式。
+
+**目标格式**（每行一个 JSON 对象）：
+
+```jsonl
+{"question_id": "q1", "prompt": "题目文本", "label": "正确答案"}
+```
+
+- `question_id`：题目唯一标识
+- `prompt`：完整的题目文本（含选项、指令等）
+- `label`：标准答案（数学题为数值/表达式，选择题为字母）
+- 可携带额外字段（`category`、`language` 等），不影响流水线
+
+**参考脚本**：`scripts/prepare_mmlu_prox.py` — 从 HuggingFace MMLU-ProX 数据集转换为 JSONL，展示了完整模式：
+
+```python
+# 核心转换逻辑：原始 record → nano-eval JSONL record
+def convert_record(record, language):
+    prompt = format_prompt(record["question"], options)  # 拼装题目+选项
+    return {
+        "question_id": f"{language}_{record['question_id_src']}",
+        "prompt": prompt,
+        "label": record["answer"],  # 如 "A"
+    }
+```
+
+**选择题 prompt 规范**：答案要求放在 `\boxed{}` 中，便于评分器提取：
+
+```
+题目文本
+
+A. 选项1
+B. 选项2
+C. 选项3
+D. 选项4
+
+Please select the correct answer and put the letter in \boxed{}, e.g., \boxed{A}.
+```
+
+新的数据准备脚本放 `scripts/` 下，命名 `prepare_<task>.py`。
+
+### Step 2: 注册任务
+
+在 `nanoeval/utils/task.py:TASK_TO_JSONL` 添加映射：
+
+```python
+TASK_TO_JSONL = {
+    ...
+    "your_task": "your_task.jsonl",
+}
+```
+
+### Step 3: 评分路由
+
+`nanoeval/reward/reward.py:judge_router` 按 `source` 名分发评分器：
+
+| source 包含 | 评分器 | 适用场景 |
+|-------------|--------|----------|
+| `ifeval` | `if_judge` | 指令遵循 |
+| `gpqa` / `mmlu` | `gpqa_judge` | 选择题 |
+| 其他（兜底） | `math_judge` | 数学题（提取数值比对） |
+
+- 数学类任务：无需改动，`math_judge` 兜底即可
+- 选择题任务：source 名包含 `gpqa` 或 `mmlu` 即可，否则需在 `judge_router` 加分支
+- 全新评分逻辑：写新 judge 函数，在 `judge_router` 加条件分支
+
+### Step 4: 上传数据
+
+将生成的 JSONL 上传到 https://huggingface.co/datasets/MikaStars39/nano-eval ，供其他用户下载使用。
 
 ## 输出格式
 
