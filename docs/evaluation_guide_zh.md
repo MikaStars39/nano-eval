@@ -23,9 +23,9 @@
 
 NanoEval 是一个高性能、轻量级的大语言模型评测框架，专为各类推理和知识任务的基准测试而设计。主要特性包括：
 
-- **三阶段流水线**：输入准备 → 推理生成 → 评分计算
-- **多种推理后端**：本地部署 (SGLang)、在线 API、分布式 (Ray)
-- **高吞吐设计**：基于异步 I/O 的生产者-消费者架构
+- **三阶段流水线**：输入准备 (preprocess) → 推理生成 (inference) → 评分计算 (score)
+- **多种推理后端**：本地部署 (SGLang)、在线 API，均通过 Ray 分布式调度
+- **高吞吐设计**：基于 Ray actor 的分片并行架构
 - **灵活的任务支持**：数学推理、代码生成、指令遵循、选择题等
 - **Pass@k 评测**：内置支持每道题多次采样评估
 
@@ -39,8 +39,10 @@ NanoEval/
 │   ├── backend/               # 推理后端实现
 │   │   ├── base.py             # SGLang 引擎基类，管理生命周期
 │   │   ├── offline.py          # 本地批量推理 (基于 SGLang)
-│   │   ├── online.py         # API 在线推理 (兼容 OpenAI 接口)
-│   │   └── runner.py         # 后端路由选择器
+│   │   └── online.py          # API 在线推理 (兼容 OpenAI 接口)
+│   ├── ray/                   # Ray 分布式调度
+│   │   ├── actors.py          # Ray actor 封装（Offline/Online/Scoring/Preprocess）
+│   │   └── utils.py           # Ray init + JSONL shard/merge
 │   ├── reward/                # 评分与验证模块
 │   │   ├── score.py          # 评分主控器
 │   │   ├── reward.py         # 任务特定的评分路由
@@ -51,11 +53,7 @@ NanoEval/
 │       ├── args.py           # 命令行参数解析
 │       ├── task.py           # 任务加载与预处理
 │       └── logging_utils.py  # 日志配置
-├── examples/                   # 示例评测脚本
-│   ├── test_offline_aime2024.sh    # 离线评测示例
-│   ├── test_online.sh              # 在线 API 评测示例
-│   └── test_min_offline.sh         # 最小化离线评测
-├── run.py                     # 主入口程序
+├── run.py                     # 主入口程序（基于 Ray actor 调度）
 └── docs/                      # 文档目录
     ├── evaluation_guide.md      # 英文版指南
     └── evaluation_guide_zh.md # 中文版指南 (本文档)
@@ -70,14 +68,14 @@ NanoEval/
 NanoEval 采用职责分离的三阶段设计：
 
 
-| 阶段         | 功能   | 关键操作                     |
-| ---------- | ---- | ------------------------ |
-| **Step01** | 输入准备 | 加载任务、应用对话模板、展开 pass@k    |
-| **Step02** | 推理生成 | 使用指定后端生成回复               |
-| **Step03** | 评分计算 | 判断答案、计算指标 (avg_k、pass@k) |
+| 阶段             | 功能   | 关键操作                     |
+| -------------- | ---- | ------------------------ |
+| **preprocess** | 输入准备 | 加载任务、应用对话模板、展开 pass@k    |
+| **inference**  | 推理生成 | 使用指定后端生成回复（Ray 分片并行）    |
+| **score**      | 评分计算 | 判断答案、计算指标 (avg_k、pass@k) |
 
 
-每个阶段都会生成中间 JSONL 文件，带来以下优势：
+每个阶段都会在 `--output-dir` 下生成对应的 JSONL 文件（prepared.jsonl、inference.jsonl、score.jsonl、final_eval.jsonl），带来以下优势：
 
 - **可恢复性**：可从任意阶段重新开始
 - **可调试性**：可随时检查中间结果
@@ -157,17 +155,16 @@ pip install ray
 ```bash
 python run.py \
   --stage all \
+  --output-dir ./work \
   --task-dir ./outputs/nano_eval \
   --tasks "aime2024@4" \
-  --output ./work/step01.jsonl \
-  --inference-output ./work/step02.jsonl \
-  --score-output ./work/step03_score.jsonl \
-  --final-eval-output ./work/step03_metrics.jsonl \
   --backend offline \
   --model-path /path/to/your/model \
   --temperature 1.0 \
   --max-tokens 32768 \
-  --concurrency 32
+  --concurrency 32 \
+  --num-shards 4 \
+  --ray-address auto
 ```
 
 ### 最小化在线 API 评测示例
@@ -175,43 +172,44 @@ python run.py \
 ```bash
 python run.py \
   --stage all \
+  --output-dir ./work \
   --task-dir ./outputs/nano_eval \
   --tasks "ifeval@1" \
-  --output ./work/step01.jsonl \
-  --inference-output ./work/step02.jsonl \
-  --score-output ./work/step03_score.jsonl \
-  --final-eval-output ./work/step03_metrics.jsonl \
   --backend online \
   --api-key "your-api-key" \
   --base-url "https://api.example.com/v1" \
   --model "gpt-4o-mini" \
   --temperature 0.7 \
   --max-tokens 4096 \
-  --concurrency 100
+  --concurrency 100 \
+  --num-shards 4 \
+  --ray-address auto
 ```
 
 ---
 
 ## 评测流水线
 
-### 阶段 1：输入准备
+### 阶段 1：输入准备 (preprocess)
 
 该阶段负责：
 
 1. 从 `--task-dir` 发现任务文件
 2. 应用对话模板（如指定了 `--chat-template-model-path`）
 3. 为 pass@k 评测展开每道题目
-4. 将准备好的 prompts 写入 `--output`
+4. 将准备好的 prompts 写入 `--output-dir/prepared.jsonl`
 
 ```bash
 python run.py \
-  --stage step01 \
+  --stage preprocess \
+  --output-dir ./work \
   --tasks "aime2024@4,aime2025@8" \
   --pass-k 1 \
   --task-dir ./outputs/nano_eval \
-  --output ./work/step01.jsonl \
+  --backend online \
   --chat-template-model-path /path/to/model \
-  --system-prompt "You are a helpful assistant."
+  --system-prompt "You are a helpful assistant." \
+  --ray-address auto
 ```
 
 **任务指定语法：**
@@ -220,37 +218,38 @@ python run.py \
 - `taskname@k` — 使用 k 次采样
 - `all` — 自动发现目录下所有任务
 
-### 阶段 2：推理生成
+### 阶段 2：推理生成 (inference)
 
-使用指定后端生成回复。
+使用指定后端生成回复。输入自动读取 `--output-dir/prepared.jsonl`，输出写入 `--output-dir/inference.jsonl`。
 
 ```bash
 python run.py \
-  --stage step02 \
-  --input ./work/step01.jsonl \
-  --inference-output ./work/step02.jsonl \
+  --stage inference \
+  --output-dir ./work \
   --backend offline \
   --model-path /path/to/model \
   --tp-size 1 \
   --dp-size 8 \
   --temperature 0.6 \
   --max-tokens 81920 \
-  --concurrency 1024
+  --concurrency 1024 \
+  --num-shards 4 \
+  --ray-address auto
 ```
 
-**断点续跑**：如果 `--inference-output` 已存在，只处理缺失的 ID。
+**断点续跑**：使用 `--resume` 参数，已完成的 ID 会被跳过。
 
-### 阶段 3：评分计算
+### 阶段 3：评分计算 (score)
 
-评估回复并计算指标。
+评估回复并计算指标。输入自动读取 `--output-dir/inference.jsonl`，输出写入 `--output-dir/score.jsonl` 和 `--output-dir/final_eval.jsonl`。
 
 ```bash
 python run.py \
-  --stage step03 \
-  --eval-input ./work/step02.jsonl \
-  --score-output ./work/step03_score.jsonl \
-  --final-eval-output ./work/step03_metrics.jsonl \
-  --n-proc 32
+  --stage score \
+  --output-dir ./work \
+  --backend online \
+  --n-proc 32 \
+  --ray-address auto
 ```
 
 ---
@@ -373,12 +372,16 @@ ROLLOUT_ARGS=(
 ### Ray 分布式调优
 
 ```bash
-# 目标 1000 req/s，单次 100ms
---ray-num-actors 20
---ray-worker-concurrency 50
-# 总计 = 1000 并发请求
+# 使用 --num-shards 控制并行 actor 数量
+# 离线后端：每个 shard 使用 tp_size * dp_size 个 GPU
+--num-shards 4   # 4 个推理 actor 并行
 
-# 根据 API 容量和延迟调整
+# 在线后端：每个 shard 独立并发调用 API
+--num-shards 8   # 8 个 actor，各自使用 --concurrency 并发
+--concurrency 100
+
+# 连接到已有 Ray 集群
+--ray-address auto
 ```
 
 ### 评分阶段调优
@@ -445,7 +448,7 @@ TASK_TO_JSONL = {
 
 ## 输出格式说明
 
-### Step01 输出（准备好的输入）
+### preprocess 输出（prepared.jsonl）
 
 ```jsonl
 {
@@ -458,7 +461,7 @@ TASK_TO_JSONL = {
 }
 ```
 
-### Step02 输出（推理结果）
+### inference 输出（inference.jsonl）
 
 ```jsonl
 {
@@ -480,7 +483,7 @@ TASK_TO_JSONL = {
 }
 ```
 
-### Step03 评分输出（每条记录）
+### score 评分输出（score.jsonl）
 
 ```jsonl
 {
@@ -496,7 +499,7 @@ TASK_TO_JSONL = {
 }
 ```
 
-### Step03 指标输出（汇总）
+### score 指标输出（final_eval.jsonl）
 
 ```jsonl
 ["aime2024", {
@@ -548,8 +551,8 @@ TASK_TO_JSONL = {
 
 ```bash
 # 删除损坏的输出重新运行
-rm ./work/step02.jsonl
-python run.py --stage step02 ...
+rm ./work/inference.jsonl
+python run.py --stage inference --output-dir ./work ...
 ```
 
 ### 问题：对话模板错误
@@ -619,22 +622,15 @@ WORKDIR=${REPO_ROOT}/outputs/eval_${TIMESTAMP}
 LOG_FILE="${WORKDIR}/run.log"
 mkdir -p "${WORKDIR}"
 
-# 阶段输出
-PREPARED_INPUT="${WORKDIR}/step01_prepared.jsonl"
-INFERENCE_OUTPUT="${WORKDIR}/step02_inference.jsonl"
-SCORE_OUTPUT="${WORKDIR}/step03_score.jsonl"
-FINAL_EVAL_OUTPUT="${WORKDIR}/step03_final_eval.jsonl"
-
 # 任务配置
 TASK_ARGS=(
   --stage all
+  --output-dir ${WORKDIR}
   --task-dir ${REPO_ROOT}/outputs/nano_eval
   --tasks "aime2024@4,aime2025@8,gpqa_diamond@1"
-  --output ${PREPARED_INPUT}
-  --inference-output ${INFERENCE_OUTPUT}
-  --score-output ${SCORE_OUTPUT}
-  --final-eval-output ${FINAL_EVAL_OUTPUT}
   --n-proc 32
+  --num-shards 4
+  --ray-address auto
 )
 
 # 推理配置 (离线示例)

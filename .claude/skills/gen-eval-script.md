@@ -26,12 +26,14 @@ Ask the user the following questions using `AskUserQuestion`. Group related ques
 
 **If offline:**
 4. **Model path**: Local path to the model weights.
-5. **TP size / DP size**: Tensor-parallel and data-parallel sizes (defaults: tp=1, dp=8).
+5. **TP size / DP size**: Tensor-parallel and data-parallel sizes (defaults: tp=8, dp=1).
+6. **Num shards**: Number of inference shards / Ray actors (default: 1).
 
 **If online:**
 4. **Base URL**: API endpoint URL.
 5. **API key**: API key (can leave as placeholder `YOUR_API_KEY`).
 6. **Model name**: Model identifier for the API (e.g. `gpt-oss-120b`).
+7. **Num shards**: Number of online inference shards / Ray actors (default: 1).
 
 ### Round 3 — Sampling & generation parameters
 
@@ -61,40 +63,24 @@ export NLTK_DATA="${NLTK_DATA:-/mnt/llm-train/users/explore-train/qingyu/.cache}
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKDIR="${REPO_ROOT}/outputs/<RUN_NAME>_${TIMESTAMP}"
-LOG_FILE="${WORKDIR}/run.log"
 mkdir -p "${WORKDIR}"
 
-PREPARED_INPUT="${WORKDIR}/step01_prepared.jsonl"
-INFERENCE_OUTPUT="${WORKDIR}/step02_inference.jsonl"
-SCORE_OUTPUT="${WORKDIR}/step03_score.jsonl"
-FINAL_EVAL_OUTPUT="${WORKDIR}/step03_final_eval.jsonl"
-
-TASK_ARGS=(
-  --stage all
-  --task-dir "${REPO_ROOT}/outputs/nano_eval"
-  --tasks "<TASKS>"
-  --output "${PREPARED_INPUT}"
-  --inference-output "${INFERENCE_OUTPUT}"
-  --score-output "${SCORE_OUTPUT}"
-  --final-eval-output "${FINAL_EVAL_OUTPUT}"
-)
-
-ROLLOUT_ARGS=(
-  --model-path <MODEL_PATH>
-  --backend offline
-  --tp-size <TP_SIZE>
-  --dp-size <DP_SIZE>
-  --temperature <TEMPERATURE>
-  --top-p <TOP_P>
-  --enable-thinking <ENABLE_THINKING>
-  --max-tokens <MAX_TOKENS>
-  --concurrency <CONCURRENCY>
-  --n-proc <N_PROC>
-)
-
 python "${REPO_ROOT}/run.py" \
-  "${TASK_ARGS[@]}" \
-  "${ROLLOUT_ARGS[@]}" 2>&1 | tee "${LOG_FILE}"
+  --output-dir "${WORKDIR}" \
+  --task-dir "${REPO_ROOT}/outputs/nano_eval" \
+  --tasks "<TASKS>" \
+  --stage all \
+  --backend offline \
+  --model-path <MODEL_PATH> \
+  --tp-size <TP_SIZE> \
+  --dp-size <DP_SIZE> \
+  --num-shards <NUM_SHARDS> \
+  --temperature <TEMPERATURE> \
+  --top-p <TOP_P> \
+  --enable-thinking <ENABLE_THINKING> \
+  --max-tokens <MAX_TOKENS> \
+  --n-proc <N_PROC> \
+  --ray-address "${RAY_ADDRESS:-auto}" 2>&1 | tee "${WORKDIR}/run.log"
 ```
 
 ### Online template
@@ -108,51 +94,32 @@ export NLTK_DATA="${NLTK_DATA:-/mnt/llm-train/users/explore-train/qingyu/.cache}
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKDIR="${REPO_ROOT}/outputs/<RUN_NAME>_${TIMESTAMP}"
-LOG_FILE="${WORKDIR}/run.log"
 mkdir -p "${WORKDIR}"
 
-PREPARED_INPUT="${WORKDIR}/step01_prepared.jsonl"
-INFERENCE_OUTPUT="${WORKDIR}/step02_inference.jsonl"
-SCORE_OUTPUT="${WORKDIR}/step03_score.jsonl"
-FINAL_EVAL_OUTPUT="${WORKDIR}/step03_final_eval.jsonl"
-
-TASK_ARGS=(
-  --stage all
-  --task-dir "${REPO_ROOT}/outputs/nano_eval"
-  --tasks "<TASKS>"
-  --output "${PREPARED_INPUT}"
-  --inference-output "${INFERENCE_OUTPUT}"
-  --score-output "${SCORE_OUTPUT}"
-  --final-eval-output "${FINAL_EVAL_OUTPUT}"
-)
-
-ONLINE_ARGS=(
-  --api-key "<API_KEY>"
-  --base-url "<BASE_URL>"
-  --model "<MODEL_NAME>"
-)
-
-ROLLOUT_ARGS=(
-  --backend online
-  --temperature <TEMPERATURE>
-  --top-p <TOP_P>
-  --enable-thinking <ENABLE_THINKING>
-  --max-tokens <MAX_TOKENS>
-  --concurrency <CONCURRENCY>
-  --n-proc <N_PROC>
-)
-
 python "${REPO_ROOT}/run.py" \
-  "${TASK_ARGS[@]}" \
-  "${ONLINE_ARGS[@]}" \
-  "${ROLLOUT_ARGS[@]}" 2>&1 | tee "${LOG_FILE}"
+  --output-dir "${WORKDIR}" \
+  --task-dir "${REPO_ROOT}/outputs/nano_eval" \
+  --tasks "<TASKS>" \
+  --stage all \
+  --backend online \
+  --api-key "<API_KEY>" \
+  --base-url "<BASE_URL>" \
+  --model "<MODEL_NAME>" \
+  --num-shards <NUM_SHARDS> \
+  --temperature <TEMPERATURE> \
+  --top-p <TOP_P> \
+  --enable-thinking <ENABLE_THINKING> \
+  --max-tokens <MAX_TOKENS> \
+  --concurrency <CONCURRENCY> \
+  --n-proc <N_PROC> \
+  --ray-address "${RAY_ADDRESS:-auto}" 2>&1 | tee "${WORKDIR}/run.log"
 ```
 
 ## Rules
 
 - Replace all `<PLACEHOLDER>` values with user-provided or default values.
-- If the user specifies `--reasoning-effort`, add it to `ROLLOUT_ARGS`.
-- Include commented-out lines for optional parameters the user didn't set (top-k, min-p, presence-penalty, repetition-penalty, ray-num-actors, ray-worker-concurrency, online-request-timeout-s, online-stall-log-interval-s) so the user can easily enable them later.
+- If the user specifies `--reasoning-effort`, add it to the command.
+- Include commented-out lines for optional parameters the user didn't set (top-k, min-p, presence-penalty, repetition-penalty, agent-loop, max-turns) so the user can easily enable them later.
 - Make the script executable after writing it (`chmod +x`).
 - Always use `REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"` so the script works from any directory.
 - After generating, show the user the full script path and remind them to sync it to the GPU server for execution.

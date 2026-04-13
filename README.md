@@ -11,7 +11,7 @@
 
 ## Overview
 
-NanoEval 是一个轻量高性能的 LLM 评测工具，采用三阶段流水线架构：**输入准备 → 推理 → 评分**。
+NanoEval 是一个轻量高性能的 LLM 评测工具，采用三阶段流水线架构：**输入准备 → 推理 → 评分**，全部通过 Ray 分布式调度。
 
 详细使用指南见 [`docs/evaluation_guide_zh.md`](docs/evaluation_guide_zh.md)（[English](docs/evaluation_guide.md)）。
 
@@ -20,28 +20,26 @@ NanoEval 是一个轻量高性能的 LLM 评测工具，采用三阶段流水线
 ```bash
 # Online 后端
 python run.py \
-  --stage all \
+  --output-dir outputs/my_eval \
   --task-dir outputs/nano_eval \
   --tasks "gpqa_diamond@4,math500@1,aime2025@8,ifeval@1" \
-  --output outputs/step01.jsonl \
-  --inference-output outputs/step02.jsonl \
-  --score-output outputs/step03_score.jsonl \
-  --final-eval-output outputs/step03_final.jsonl \
   --backend online \
   --api-key YOUR_KEY \
   --base-url http://YOUR_ENDPOINT/v1 \
   --model YOUR_MODEL \
   --temperature 1.0 \
   --max-tokens 131072 \
-  --concurrency 1024
+  --concurrency 1024 \
+  --num-shards 4
 
 # Offline 后端（本地 SGLang）
-python run.py --stage all --backend offline --model-path /path/to/model ...
+python run.py --output-dir outputs/my_eval --backend offline \
+  --model-path /path/to/model --tp-size 8 --num-shards 4 ...
 
 # 单独运行各阶段
-python run.py --stage step01 ...  # 准备输入
-python run.py --stage step02 ...  # 推理
-python run.py --stage step03 ...  # 评分
+python run.py --output-dir ./out --stage preprocess --backend offline ...
+python run.py --output-dir ./out --stage inference --backend offline ...
+python run.py --output-dir ./out --stage score --backend offline ...
 ```
 
 ## Supported Tasks
@@ -60,9 +58,9 @@ python run.py --stage step03 ...  # 评分
 ## Project Structure
 
 ```
-run.py                     # 主入口
+run.py                     # 主入口（Ray 编排）
 nanoeval/
-  backend/                 # 推理后端（offline SGLang / online API / mock）
+  backend/                 # 推理后端（offline SGLang / online API）
   reward/                  # 评分器（math / ifeval / gpqa / mmlu）
   ray/                     # Ray 分布式 actor 封装
   utils/                   # CLI 参数、任务加载、日志

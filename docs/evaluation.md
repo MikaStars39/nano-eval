@@ -1,14 +1,16 @@
-> 本文档描述 NanoEval 的评测流水线。不包含：context_rot recipes 的使用（见 `recipes/context_rot/README.md`）、Ray 分布式部署（见 `recipes/eval/run_ray.py`）。
+> 本文档描述 NanoEval 的评测流水线。不包含：context_rot recipes 的使用（见 `recipes/context_rot/README.md`）。
 
 ## 三阶段流水线
 
-| Stage | 入口 | 输入 | 输出 |
-|-------|------|------|------|
-| **Step01** 准备 | `nanoeval/utils/__init__.py:prepare_eval_input` | 任务 JSONL + tokenizer | 合并后的 prompt JSONL |
-| **Step02** 推理 | `nanoeval/backend/runner.py:run_inference` | prompt JSONL | response JSONL |
-| **Step03** 评分 | `nanoeval/reward/score.py:eval_results` | response JSONL | score JSONL + metrics |
+所有阶段通过 `run.py` 统一调度，底层使用 Ray actors（定义在 `nanoeval/ray/actors.py`）执行。
 
-每个阶段产出独立的 JSONL 文件，支持从任意阶段断点续跑。
+| Stage | Ray Actor | 输入 | 输出 |
+|-------|-----------|------|------|
+| **preprocess** 准备 | `PreprocessActor` | 任务 JSONL + tokenizer | 合并后的 prompt JSONL |
+| **inference** 推理 | `OfflineInferenceActor` / `OnlineInferenceActor` | prompt JSONL | response JSONL |
+| **score** 评分 | `ScoringActor` | response JSONL | score JSONL + metrics |
+
+每个阶段产出独立的 JSONL 文件，支持从任意阶段断点续跑（`--stage preprocess/inference/score`）。
 
 ## 后端选择
 
@@ -17,11 +19,10 @@
 | `offline` | 本地 GPU (SGLang) | `--model-path`, `--tp-size`, `--dp-size` |
 | `online` | API 调用 (OpenAI 兼容) | `--api-key`, `--base-url`, `--model`, `--concurrency` |
 | `online` + `--agent-loop` | 多轮对话 + 工具调用 | 加 `--max-turns`，输入需含 `messages`/`tools`/`tool_responses` |
-| `mock` | 测试 | 无需额外参数 |
 
 ### Offline 注意事项
 
-- SGLang 用 `max_new_tokens` 而非 `max_tokens`，runner.py 自动转换
+- SGLang 用 `max_new_tokens` 而非 `max_tokens`，offline 引擎自动转换
 - `--dp-size` 设为 GPU 数量，`--tp-size` 仅在单卡装不下模型时 >1
 - `--concurrency` 建议 64-128× GPU 数
 
@@ -48,7 +49,7 @@
 
 ## JSONL 格式
 
-### Step02 输入（prompt 或 messages）
+### inference 输入（prompt 或 messages）
 
 ```jsonl
 {"id": "aime2024_1_0", "prompt": "...", "label": "42", "source": "aime2024"}
@@ -60,13 +61,13 @@
 {"id": "test_1", "messages": [...], "tools": [...], "tool_responses": [...]}
 ```
 
-### Step02 输出
+### inference 输出
 
 ```jsonl
 {"id": "...", "response": "...", "thinking": "...", "usage": {...}, "_status": "success"}
 ```
 
-### Step03 输出（聚合指标）
+### score 输出（聚合指标）
 
 ```jsonl
 ["aime2024", {"avg_k": 0.25, "pass_k": 0.5, "avg_total_tokens": 150}]

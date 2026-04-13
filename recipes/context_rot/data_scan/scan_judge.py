@@ -5,11 +5,10 @@ scan_judge.py — LLM Judge for flagged lazy training data
 Phase 2: For each flagged candidate from scan_rules.py, use an LLM judge
 to evaluate whether the training example truly contains lazy patterns.
 
-Refactored to use nano-eval's OnlineBatchInferenceEngine for batch inference.
+Refactored to use nano-eval's OnlineInferenceActor (Ray) for batch inference.
 """
 
 import argparse
-import asyncio
 import json
 import logging
 import os
@@ -21,7 +20,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from nanoeval.backend.online import OnlineBatchInferenceEngine, APIConfig
+import ray
+
+from nanoeval.ray import init_ray
+from nanoeval.ray.actors import OnlineInferenceActor
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +268,7 @@ def prepare_batch_input(flagged_items: list[dict], output_path: str) -> dict[str
             user_msg = build_judge_prompt(flagged, example)
             del example  # free memory
 
-            # Write batch input line (messages format for OnlineBatchInferenceEngine)
+            # Write batch input line (messages format for OnlineInferenceActor)
             batch_item = {
                 "id": item_id,
                 "messages": [
@@ -354,7 +356,7 @@ def post_process_results(
 
 
 async def run_batch_judge(args):
-    """Main pipeline: prepare -> batch inference -> post-process."""
+    """Main pipeline: prepare -> batch inference via Ray -> post-process."""
     # Load flagged items
     flagged_items = []
     with open(args.input, "r", encoding="utf-8") as f:
@@ -381,14 +383,9 @@ async def run_batch_judge(args):
         logger.info("No items to judge after preparation")
         return
 
-    # Step 2: Batch inference using nano-eval's OnlineBatchInferenceEngine
+    # Step 2: Batch inference via Ray OnlineInferenceActor
     logger.info("Starting batch inference with concurrency=%d", args.concurrency)
-    config = APIConfig(
-        api_key=args.judge_api_key,
-        base_url=args.judge_api_base.rstrip("/"),
-        model=args.judge_model,
-    )
-    engine = OnlineBatchInferenceEngine(config, concurrency=args.concurrency)
+    init_ray(address=args.ray_address)
 
     sampling_params = {
         "max_tokens": 1024,
@@ -399,7 +396,13 @@ async def run_batch_judge(args):
     if os.path.exists(batch_output_path):
         os.remove(batch_output_path)
 
-    await engine.run(batch_input_path, batch_output_path, sampling_params)
+    actor = OnlineInferenceActor.options(num_cpus=1).remote(
+        api_key=args.judge_api_key,
+        base_url=args.judge_api_base,
+        model=args.judge_model,
+        concurrency=args.concurrency,
+    )
+    ray.get(actor.run.remote(batch_input_path, batch_output_path, sampling_params))
 
     # Step 3: Post-process results
     logger.info("Post-processing inference results...")
@@ -423,8 +426,10 @@ def main():
     parser.add_argument("--judge-api-key", required=True, help="Judge API key")
     parser.add_argument("--concurrency", type=int, default=16, help="Max concurrent API calls")
     parser.add_argument("--limit", type=int, default=None, help="Max items to judge")
+    parser.add_argument("--ray-address", type=str, default="auto", help="Ray cluster address")
     args = parser.parse_args()
 
+    import asyncio
     asyncio.run(run_batch_judge(args))
 
 

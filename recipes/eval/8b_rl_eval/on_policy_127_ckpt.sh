@@ -8,28 +8,19 @@ TIMESTAMP=$(date +%Y%m%d%H%M%S)
 WORKDIR="${REPO_ROOT}/outputs/iter_0000127_qwen3_8b_rl_onpolicy_offline_${TIMESTAMP}"
 mkdir -p "${WORKDIR}"
 
-TASK_ARGS=(
-  --stage all
-  --task-dir "/jpfs/chenyanxu.9/data/nano-eval"
-  --tasks "aime2024@32,aime2025@32,math500@4,gpqa_diamond@4"
-  --output "${WORKDIR}/step01_prepared.jsonl"
-  --inference-output "${WORKDIR}/step02_inference.jsonl"
-  --score-output "${WORKDIR}/step03_score.jsonl"
-  --final-eval-output "${WORKDIR}/step03_final_eval.jsonl"
-)
-
-ROLLOUT_ARGS=(
-  --model-path "/jpfs-5p/chenyanxu.9/model/Qwen3-8B-dapo-rl-20260401_072346/iter_0000127-hf"
-  --backend offline
-  --tp-size 1
-  --dp-size 8
-  --temperature 1.0
-  --top-p 0.95
-  --enable-thinking true
-  --max-tokens 30000
-  --n-proc 32
-)
-
 python "${REPO_ROOT}/run.py" \
-  "${TASK_ARGS[@]}" \
-  "${ROLLOUT_ARGS[@]}" 2>&1 | tee "${WORKDIR}/run.log"
+  --output-dir "${WORKDIR}" \
+  --task-dir "/jpfs/chenyanxu.9/data/nano-eval" \
+  --tasks "aime2024@32,aime2025@32,math500@4,gpqa_diamond@4" \
+  --stage all \
+  --backend offline \
+  --model-path "/jpfs-5p/chenyanxu.9/model/Qwen3-8B-dapo-rl-20260401_072346/iter_0000127-hf" \
+  --tp-size 1 \
+  --dp-size 8 \
+  --temperature 1.0 \
+  --top-p 0.95 \
+  --enable-thinking true \
+  --max-tokens 30000 \
+  --n-proc 32 \
+  --num-shards "${NUM_SHARDS:-1}" \
+  --ray-address "${RAY_ADDRESS:-auto}" 2>&1 | tee "${WORKDIR}/run.log"

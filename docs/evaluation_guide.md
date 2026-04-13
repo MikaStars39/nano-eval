@@ -23,9 +23,9 @@ A comprehensive guide for using NanoEval, a fast and lightweight evaluation tool
 
 NanoEval is a high-performance, lightweight evaluation framework designed for benchmarking Large Language Models across various reasoning and knowledge tasks. It features:
 
-- **Three-stage pipeline**: Input preparation → Inference → Scoring
-- **Multiple backends**: Local (SGLang), Online API, and Distributed (Ray)
-- **High throughput**: Async I/O with producer-consumer architecture
+- **Three-stage pipeline**: Preprocess → Inference → Scoring
+- **Two backends**: Local (SGLang) and Online API, both orchestrated via Ray
+- **High throughput**: Async I/O with producer-consumer architecture, Ray-based sharding
 - **Flexible task support**: Math, coding, instruction following, and multiple-choice tasks
 - **Pass@k evaluation**: Built-in support for multiple sampling attempts per question
 
@@ -39,8 +39,10 @@ NanoEval/
 │   ├── backend/               # Inference backends
 │   │   ├── base.py             # Base SGLang engine with lifecycle management
 │   │   ├── offline.py          # Local batch inference (SGLang)
-│   │   ├── online.py         # API-based inference (OpenAI-compatible)
-│   │   └── runner.py         # Backend router
+│   │   └── online.py          # API-based inference (OpenAI-compatible)
+│   ├── ray/                   # Ray orchestration
+│   │   ├── actors.py          # Ray actors (Preprocess, Offline/Online Inference, Scoring)
+│   │   └── utils.py           # Ray init, JSONL shard/merge
 │   ├── reward/                # Scoring and verification
 │   │   ├── score.py          # Main scoring orchestrator
 │   │   ├── reward.py         # Judge router for task-specific scoring
@@ -51,11 +53,9 @@ NanoEval/
 │       ├── args.py           # CLI argument parsing
 │       ├── task.py           # Task loading and preparation
 │       └── logging_utils.py  # Logging configuration
-├── examples/                   # Example evaluation scripts
-│   ├── test_offline_aime2024.sh
-│   ├── test_online.sh
-│   └── test_min_offline.sh
-├── run.py                     # Main entry point
+├── recipes/                    # Experiment scripts and task-specific code
+│   └── eval/examples/         # Example evaluation scripts
+├── run.py                     # Main entry point (Ray-orchestrated pipeline)
 └── docs/                      # Documentation
 ```
 
@@ -69,11 +69,11 @@ NanoEval follows a clean separation of concerns with three distinct stages:
 
 | Stage | Purpose | Key Operations |
 |-------|---------|----------------|
-| **Step01** | Input Preparation | Load tasks, apply chat templates, expand for pass@k |
-| **Step02** | Inference | Generate responses using specified backend |
-| **Step03** | Scoring | Judge responses, compute metrics (avg_k, pass@k) |
+| **Preprocess** | Input Preparation | Load tasks, apply chat templates, expand for pass@k |
+| **Inference** | Inference | Generate responses using specified backend (sharded via Ray actors) |
+| **Score** | Scoring | Judge responses, compute metrics (avg_k, pass@k) |
 
-Each stage produces intermediate JSONL files, enabling:
+Each stage produces intermediate JSONL files inside `--output-dir`, enabling:
 - **Resumability**: Restart from any stage
 - **Debugging**: Inspect intermediate outputs
 - **Flexibility**: Use different backends for same input
@@ -145,61 +145,57 @@ pip install sglang flashinfer
 
 ```bash
 python run.py \
-  --stage all \
+  --output-dir ./out \
   --task-dir ./outputs/nano_eval \
   --tasks "aime2024@4" \
-  --output ./work/step01.jsonl \
-  --inference-output ./work/step02.jsonl \
-  --score-output ./work/step03_score.jsonl \
-  --final-eval-output ./work/step03_metrics.jsonl \
   --backend offline \
   --model-path /path/to/your/model \
   --temperature 1.0 \
   --max-tokens 32768 \
-  --concurrency 32
+  --concurrency 32 \
+  --num-shards 4 --ray-address auto
 ```
 
 ### Minimal Online Evaluation
 
 ```bash
 python run.py \
-  --stage all \
+  --output-dir ./out \
   --task-dir ./outputs/nano_eval \
   --tasks "ifeval@1" \
-  --output ./work/step01.jsonl \
-  --inference-output ./work/step02.jsonl \
-  --score-output ./work/step03_score.jsonl \
-  --final-eval-output ./work/step03_metrics.jsonl \
   --backend online \
   --api-key "your-api-key" \
   --base-url "https://api.example.com/v1" \
   --model "gpt-4o-mini" \
   --temperature 0.7 \
   --max-tokens 4096 \
-  --concurrency 100
+  --concurrency 100 \
+  --num-shards 4 --ray-address auto
 ```
 
 ---
 
 ## Evaluation Pipeline
 
-### Stage 1: Input Preparation
+### Stage 1: Preprocess
 
 This stage:
 1. Discovers task files from `--task-dir`
 2. Applies chat templates (if `--chat-template-model-path` provided)
 3. Expands each question for pass@k evaluation
-4. Writes prepared prompts to `--output`
+4. Writes prepared prompts to `<output-dir>/prepared.jsonl`
 
 ```bash
 python run.py \
-  --stage step01 \
+  --stage preprocess \
   --tasks "aime2024@4,aime2025@8" \
   --pass-k 1 \
   --task-dir ./outputs/nano_eval \
-  --output ./work/step01.jsonl \
+  --output-dir ./out \
+  --backend online \
   --chat-template-model-path /path/to/model \
-  --system-prompt "You are a helpful assistant."
+  --system-prompt "You are a helpful assistant." \
+  --ray-address auto
 ```
 
 **Task specification syntax:**
@@ -209,23 +205,23 @@ python run.py \
 
 ### Stage 2: Inference
 
-Generates responses using the specified backend.
+Generates responses using the specified backend. Input is automatically sharded across Ray actors.
 
 ```bash
 python run.py \
-  --stage step02 \
-  --input ./work/step01.jsonl \
-  --inference-output ./work/step02.jsonl \
+  --stage inference \
+  --output-dir ./out \
   --backend offline \
   --model-path /path/to/model \
   --tp-size 1 \
   --dp-size 8 \
   --temperature 0.6 \
   --max-tokens 81920 \
-  --concurrency 1024
+  --concurrency 1024 \
+  --num-shards 4 --ray-address auto
 ```
 
-**Resume capability:** If `--inference-output` already exists, only processes missing IDs.
+**Resume capability:** Use `--resume` to skip already-completed items if `<output-dir>/inference.jsonl` already exists.
 
 ### Stage 3: Scoring
 
@@ -233,11 +229,11 @@ Evaluates responses and computes metrics.
 
 ```bash
 python run.py \
-  --stage step03 \
-  --eval-input ./work/step02.jsonl \
-  --score-output ./work/step03_score.jsonl \
-  --final-eval-output ./work/step03_metrics.jsonl \
-  --n-proc 32
+  --stage score \
+  --output-dir ./out \
+  --backend online \
+  --n-proc 32 \
+  --ray-address auto
 ```
 
 ---
@@ -353,10 +349,10 @@ ROLLOUT_ARGS=(
 ### Online Ray Tuning
 
 ```bash
-# For 1000 req/s target with 100ms per request
---ray-num-actors 20
---ray-worker-concurrency 50
-# Total = 1000 concurrent requests
+# Distribute inference across multiple shards for higher throughput
+--num-shards 8          # 8 parallel Ray inference actors
+--concurrency 50        # Concurrency per actor
+# Total = 400 concurrent requests
 
 # Tune based on API capacity and latency
 ```
@@ -421,7 +417,7 @@ TASK_TO_JSONL = {
 
 ## Output Format
 
-### Step01 Output (Prepared Input)
+### Preprocess Output (`prepared.jsonl`)
 
 ```jsonl
 {
@@ -434,7 +430,7 @@ TASK_TO_JSONL = {
 }
 ```
 
-### Step02 Output (Inference Results)
+### Inference Output (`inference.jsonl`)
 
 ```jsonl
 {
@@ -456,7 +452,7 @@ TASK_TO_JSONL = {
 }
 ```
 
-### Step03 Score Output (Per-Instance)
+### Score Output (`score.jsonl`) — Per-Instance
 
 ```jsonl
 {
@@ -472,7 +468,7 @@ TASK_TO_JSONL = {
 }
 ```
 
-### Step03 Metrics Output (Aggregated)
+### Final Eval Output (`final_eval.jsonl`) — Aggregated
 
 ```jsonl
 ["aime2024", {
@@ -519,8 +515,8 @@ TASK_TO_JSONL = {
 **Solution:**
 ```bash
 # Remove corrupted output and restart
-rm ./work/step02.jsonl
-python run.py --stage step02 ...
+rm ./out/inference.jsonl
+python run.py --stage inference --output-dir ./out ...
 ```
 
 ### Issue: Chat Template Errors
@@ -582,26 +578,19 @@ export FLASHINFER_DISABLE_VERSION_CHECK=1
 # Configuration
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 REPO_ROOT=/path/to/NanoEval
-WORKDIR=${REPO_ROOT}/outputs/eval_${TIMESTAMP}
-LOG_FILE="${WORKDIR}/run.log"
-mkdir -p "${WORKDIR}"
-
-# Stage outputs
-PREPARED_INPUT="${WORKDIR}/step01_prepared.jsonl"
-INFERENCE_OUTPUT="${WORKDIR}/step02_inference.jsonl"
-SCORE_OUTPUT="${WORKDIR}/step03_score.jsonl"
-FINAL_EVAL_OUTPUT="${WORKDIR}/step03_final_eval.jsonl"
+OUTPUT_DIR=${REPO_ROOT}/outputs/eval_${TIMESTAMP}
+LOG_FILE="${OUTPUT_DIR}/run.log"
+mkdir -p "${OUTPUT_DIR}"
 
 # Task configuration
 TASK_ARGS=(
   --stage all
   --task-dir ${REPO_ROOT}/outputs/nano_eval
   --tasks "aime2024@4,aime2025@8,gpqa_diamond@1"
-  --output ${PREPARED_INPUT}
-  --inference-output ${INFERENCE_OUTPUT}
-  --score-output ${SCORE_OUTPUT}
-  --final-eval-output ${FINAL_EVAL_OUTPUT}
+  --output-dir ${OUTPUT_DIR}
   --n-proc 32
+  --num-shards 4
+  --ray-address auto
 )
 
 # Inference configuration (offline example)
@@ -622,5 +611,6 @@ python "${REPO_ROOT}/run.py" \
   "${TASK_ARGS[@]}" \
   "${ROLLOUT_ARGS[@]}" 2>&1 | tee "${LOG_FILE}"
 
-echo "Evaluation complete. Results in ${WORKDIR}"
+# Output files are auto-generated inside ${OUTPUT_DIR}:
+#   prepared.jsonl, inference.jsonl, score.jsonl, final_eval.jsonl, final_eval.csv
 ```
