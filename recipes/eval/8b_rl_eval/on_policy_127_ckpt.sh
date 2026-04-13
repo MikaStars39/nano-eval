@@ -22,5 +22,5 @@ python "${REPO_ROOT}/run.py" \
   --enable-thinking true \
   --max-tokens 30000 \
   --n-proc 32 \
-  --num-shards "${NUM_SHARDS:-1}" \
+  --num-actors "${NUM_ACTORS:-1}" \
   --ray-address "${RAY_ADDRESS:-auto}" 2>&1 | tee "${WORKDIR}/run.log"

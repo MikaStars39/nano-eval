@@ -58,7 +58,7 @@ python run.py --output-dir ./out --backend online --tasks "math500@1" \
 
 # Offline 评测（多 shard 并行）
 python run.py --output-dir ./out --backend offline --model-path /path/to/model \
-  --num-shards 4 --tp-size 8 --tasks "aime2025@8" ...
+  --num-actors 4 --tp-size 8 --tasks "aime2025@8" ...
 
 # Agent loop 模式（多轮 + 工具调用）
 python run.py --output-dir ./out --backend online --agent-loop --max-turns 10 \

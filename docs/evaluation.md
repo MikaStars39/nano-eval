@@ -88,7 +88,7 @@ Agent loop 输入需包含 `messages`、`tools`、`tool_responses` 字段。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--num-shards` | `1` | 推理 actor 数量 |
+| `--num-actors` | `1` | 并行推理 actor 数量 |
 | `--ray-address` | `auto` | Ray 集群地址 |
 | `--resume` | `false` | 跳过已完成的 ID，断点续跑 |
 
@@ -249,7 +249,7 @@ TASK_TO_JSONL = {
 | 低延迟 API | `--concurrency 200` |
 | 高延迟 API (10-30s) | `--concurrency 2000` |
 | 有限流 API | `--concurrency` 匹配限流阈值 |
-| 多 shard 并行 | `--num-shards N`，总并发 = N × concurrency |
+| 多 actor 并行 | `--num-actors N`，总并发 = N × concurrency |
 | 评分 | `--n-proc` 匹配 CPU 核心数 |
 
 ## 常见问题

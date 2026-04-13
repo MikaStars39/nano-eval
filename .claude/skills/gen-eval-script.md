@@ -27,13 +27,13 @@ Ask the user the following questions using `AskUserQuestion`. Group related ques
 **If offline:**
 4. **Model path**: Local path to the model weights.
 5. **TP size / DP size**: Tensor-parallel and data-parallel sizes (defaults: tp=8, dp=1).
-6. **Num shards**: Number of inference shards / Ray actors (default: 1).
+6. **Num actors**: Number of parallel inference actors (default: 1).
 
 **If online:**
 4. **Base URL**: API endpoint URL.
 5. **API key**: API key (can leave as placeholder `YOUR_API_KEY`).
 6. **Model name**: Model identifier for the API (e.g. `gpt-oss-120b`).
-7. **Num shards**: Number of online inference shards / Ray actors (default: 1).
+7. **Num actors**: Number of online inference actors (default: 1).
 
 ### Round 3 — Sampling & generation parameters
 
@@ -74,7 +74,7 @@ python "${REPO_ROOT}/run.py" \
   --model-path <MODEL_PATH> \
   --tp-size <TP_SIZE> \
   --dp-size <DP_SIZE> \
-  --num-shards <NUM_SHARDS> \
+  --num-actors <NUM_ACTORS> \
   --temperature <TEMPERATURE> \
   --top-p <TOP_P> \
   --enable-thinking <ENABLE_THINKING> \
@@ -105,7 +105,7 @@ python "${REPO_ROOT}/run.py" \
   --api-key "<API_KEY>" \
   --base-url "<BASE_URL>" \
   --model "<MODEL_NAME>" \
-  --num-shards <NUM_SHARDS> \
+  --num-actors <NUM_ACTORS> \
   --temperature <TEMPERATURE> \
   --top-p <TOP_P> \
   --enable-thinking <ENABLE_THINKING> \

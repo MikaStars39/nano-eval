@@ -30,11 +30,11 @@ python run.py \
   --temperature 1.0 \
   --max-tokens 131072 \
   --concurrency 1024 \
-  --num-shards 4
+  --num-actors 4
 
 # Offline 后端（本地 SGLang）
 python run.py --output-dir outputs/my_eval --backend offline \
-  --model-path /path/to/model --tp-size 8 --num-shards 4 ...
+  --model-path /path/to/model --tp-size 8 --num-actors 4 ...
 
 # 单独运行各阶段
 python run.py --output-dir ./out --stage preprocess --backend offline ...

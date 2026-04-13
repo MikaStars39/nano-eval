@@ -25,16 +25,16 @@ def init_ray(address: str = "auto", **kwargs: Any) -> None:
     )
 
 
-def shard_jsonl(input_file: str, num_shards: int, output_dir: str) -> List[str]:
-    """Split a JSONL file into *num_shards* roughly equal shard files.
+def shard_jsonl(input_file: str, num_actors: int, output_dir: str) -> List[str]:
+    """Split a JSONL file into *num_actors* roughly equal shard files.
 
     Returns a list of shard file paths (only non-empty shards are created).
     """
     os.makedirs(output_dir, exist_ok=True)
     lines = Path(input_file).read_text("utf-8").splitlines()
-    size = math.ceil(len(lines) / max(1, num_shards))
+    size = math.ceil(len(lines) / max(1, num_actors))
     paths: List[str] = []
-    for i in range(num_shards):
+    for i in range(num_actors):
         chunk = lines[i * size : (i + 1) * size]
         if not chunk:
             continue

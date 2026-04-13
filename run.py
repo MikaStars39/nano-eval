@@ -8,14 +8,14 @@ Usage (offline, multi-node):
     python run.py --tasks "aime2025@8,math500@1" \\
         --task-dir /data/nano_eval --output-dir ./out \\
         --backend offline --model-path /path/to/model \\
-        --num-shards 4 --tp-size 8
+        --num-actors 4 --tp-size 8
 
 Usage (online, parallel API workers):
     python run.py --tasks "aime2025@8" \\
         --task-dir /data/nano_eval --output-dir ./out \\
         --backend online --model my-model \\
         --api-key $API_KEY --base-url https://api.example.com/v1 \\
-        --num-shards 8
+        --num-actors 8
 
 Usage (online, agent loop):
     python run.py --tasks "aime2025@8" \\
@@ -110,8 +110,8 @@ def main():
                    help="true/false — set chat template thinking mode")
 
     # Ray / sharding
-    p.add_argument("--num-shards", type=int, default=1,
-                   help="Number of inference shards (= number of actors)")
+    p.add_argument("--num-actors", type=int, default=1,
+                   help="Number of parallel inference actors")
     p.add_argument("--ray-address", type=str, default="auto")
     p.add_argument("--resume", action="store_true")
 
@@ -180,8 +180,8 @@ def main():
 
         # Shard input
         shards_dir = os.path.join(od, "shards")
-        shard_inputs = shard_jsonl(prepared, a.num_shards, os.path.join(shards_dir, "input"))
-        log.info("[inference] split into %d shards", len(shard_inputs))
+        shard_inputs = shard_jsonl(prepared, a.num_actors, os.path.join(shards_dir, "input"))
+        log.info("[inference] split into %d actor(s)", len(shard_inputs))
 
         shard_out_dir = os.path.join(shards_dir, "output")
         os.makedirs(shard_out_dir, exist_ok=True)
@@ -191,6 +191,9 @@ def main():
             if not a.model_path:
                 raise ValueError("--model-path required for offline backend")
             num_gpus = a.tp_size * a.dp_size
+            total_gpus = num_gpus * a.num_actors
+            log.info("[inference] offline: %d actor(s) x (tp=%d x dp=%d) = %d GPU(s) total",
+                     a.num_actors, a.tp_size, a.dp_size, total_gpus)
             for i, si in enumerate(shard_inputs):
                 so = os.path.join(shard_out_dir, f"shard_{i:05d}.jsonl")
                 actor = OfflineInferenceActor.options(num_gpus=num_gpus).remote(
