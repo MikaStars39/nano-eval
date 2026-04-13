@@ -16,6 +16,7 @@ TASK_TO_JSONL: Dict[str, str] = {
     "mmlu": "mmlu.jsonl",
     "mmlu_pro": "mmlu_pro.jsonl",
     "mmlu_prox": "mmlu_prox.jsonl",
+    "mmmlu": "mmmlu.jsonl",
     "ceval": "ceval.jsonl",
     "ifeval": "ifeval.jsonl",
     "ifbench": "ifbench.jsonl",
