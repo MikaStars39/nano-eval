@@ -5,10 +5,8 @@ import time
 import os
 import sys
 import logging
-import argparse
-import signal
 from typing import Optional, List, Dict, Any, Set
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Try to import tqdm
 try:
@@ -591,88 +589,3 @@ class OnlineBatchInferenceEngine:
 
             for w in workers: w.cancel()
 
-# ------------------------- CLI Entry Point ------------------------
-
-def main():
-    from nanoeval.utils.logging_utils import configure_logger
-    configure_logger()
-
-    parser = argparse.ArgumentParser(description="Online Inference via Ray actor")
-
-    # Connection Args
-    parser.add_argument("--api-key", type=str, required=True, help="API Key")
-    parser.add_argument("--base-url", type=str, required=True, help="API Base URL")
-    parser.add_argument("--model", type=str, default="gpt-3.5-turbo")
-
-    # I/O Args
-    parser.add_argument("--input", type=str, required=True)
-    parser.add_argument("--output", type=str, required=True)
-    parser.add_argument("--concurrency", type=int, default=50)
-
-    # ------------------------- Sampling Params (Exposed) ------------------------
-    parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--max-tokens", type=int, default=1024)
-    parser.add_argument("--top-p", type=float, default=1.0)
-    parser.add_argument("--stop", type=str, help="Stop sequence (comma separated if multiple, or raw string)")
-
-    # Advanced: Allow passing a raw JSON string for obscure params
-    parser.add_argument("--extra-params", type=str, default="{}", help="JSON string for extra sampling params")
-
-    # Agent loop mode
-    parser.add_argument("--agent-loop", action="store_true", help="Enable multi-turn agent loop with tool calling")
-    parser.add_argument("--max-turns", type=int, default=10, help="Max turns per conversation in agent loop mode")
-
-    # Ray
-    parser.add_argument("--ray-address", type=str, default="auto", help="Ray cluster address")
-
-    args = parser.parse_args()
-
-    # 1. Build Sampling Params Dictionary
-    sampling_params = {
-        "temperature": args.temperature,
-        "max_tokens": args.max_tokens,
-        "top_p": args.top_p
-    }
-
-    # Handle Stop tokens
-    if args.stop:
-        if "," in args.stop:
-            sampling_params["stop"] = args.stop.split(",")
-        else:
-            sampling_params["stop"] = args.stop
-
-    # Merge extra JSON params
-    if args.extra_params:
-        try:
-            extras = json.loads(args.extra_params)
-            sampling_params.update(extras)
-        except json.JSONDecodeError:
-            logger.error("Failed to parse --extra-params JSON")
-            sys.exit(1)
-
-    # 2. Run via Ray actor
-    import ray
-    from nanoeval.ray import init_ray
-    from nanoeval.ray.actors import OnlineInferenceActor
-
-    init_ray(address=args.ray_address)
-    actor = OnlineInferenceActor.options(num_cpus=1).remote(
-        api_key=args.api_key,
-        base_url=args.base_url,
-        model=args.model,
-        concurrency=args.concurrency,
-    )
-
-    try:
-        if args.agent_loop:
-            ray.get(actor.run_agent_loop.remote(
-                args.input, args.output, sampling_params,
-                max_turns=args.max_turns,
-            ))
-        else:
-            ray.get(actor.run.remote(args.input, args.output, sampling_params))
-    except KeyboardInterrupt:
-        pass
-
-if __name__ == "__main__":
-    main()
