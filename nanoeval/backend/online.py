@@ -48,6 +48,23 @@ def _build_request_messages(item: Dict[str, Any], system_prompt: str = "") -> Li
     return messages
 
 
+def _extract_responses_content(response: Dict[str, Any]) -> tuple[str, Optional[str]]:
+    """Extract content and reasoning from Responses API output."""
+    content = ""
+    reasoning_parts = []
+    for out in response.get("output", []):
+        if out.get("type") == "message":
+            for c in out.get("content", []):
+                if c.get("type") == "output_text":
+                    content += c.get("text", "")
+        elif out.get("type") == "reasoning":
+            for s in out.get("summary", []):
+                if s.get("type") == "summary_text":
+                    reasoning_parts.append(s.get("text", ""))
+    reasoning = "\n".join(reasoning_parts) if reasoning_parts else None
+    return content, reasoning
+
+
 class ToolResponseMatcher:
     """Match model tool calls to pre-recorded responses from a pool.
 
@@ -110,6 +127,8 @@ class APIConfig:
     model: str
     timeout: int = 6000
     max_retries: int = 500
+    extra_headers: Optional[Dict[str, str]] = None
+    api_type: str = "chat"  # "chat" | "responses"
 
 # ------------------------- Async HTTP Client ------------------------
 
@@ -123,6 +142,8 @@ class AsyncClient:
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json"
         }
+        if config.extra_headers:
+            self.headers.update(config.extra_headers)
         self.connector = aiohttp.TCPConnector(limit=0, ttl_dns_cache=300)
         self.session: Optional[aiohttp.ClientSession] = None
 
@@ -144,7 +165,9 @@ class AsyncClient:
         Sends the payload exactly as constructed by the worker.
         Handles retries for network/server errors.
         """
-        url = f"{self.config.base_url}/chat/completions"
+        url = (f"{self.config.base_url}/responses"
+               if self.config.api_type == "responses"
+               else f"{self.config.base_url}/chat/completions")
         retry_delay = 1.0
         max_retry_delay = 60.0
 
@@ -391,6 +414,76 @@ class OnlineBatchInferenceEngine:
                 await self.output_queue.put(item)
                 self.input_queue.task_done()
 
+    # ------------------------- Responses API Worker ------------------------
+
+    async def _responses_worker(self, client: AsyncClient, sampling_params: Dict[str, Any]):
+        """Worker for OpenAI Responses API format."""
+        while True:
+            item = await self.input_queue.get()
+            if item is None:
+                self.input_queue.task_done()
+                break
+
+            async with self.sem:
+                start_t = time.perf_counter()
+                try:
+                    # Extract system prompt → instructions, rest → input
+                    raw_messages = item.get("messages")
+                    instructions = str(sampling_params.get("__system_prompt", "") or "")
+                    input_msgs: Any  # List[Dict] or str
+
+                    if isinstance(raw_messages, list) and raw_messages:
+                        filtered = []
+                        for msg in raw_messages:
+                            if msg.get("role") == "system":
+                                instructions = msg["content"]
+                            else:
+                                filtered.append(msg)
+                        input_msgs = filtered
+                    else:
+                        input_msgs = str(item.get("prompt", ""))
+
+                    # Build payload
+                    payload: Dict[str, Any] = {"model": self.api_config.model}
+                    if instructions:
+                        payload["instructions"] = instructions
+                    payload["input"] = input_msgs
+
+                    # Map sampling params (max_tokens → max_output_tokens)
+                    for key, value in sampling_params.items():
+                        if key in ("__system_prompt", "chat_template_kwargs"):
+                            continue
+                        if key == "max_tokens":
+                            payload["max_output_tokens"] = value
+                        else:
+                            payload[key] = value
+
+                    # Per-request overrides
+                    for k in ("temperature", "max_output_tokens", "top_p"):
+                        if k in item:
+                            payload[k] = item[k]
+                    if "max_tokens" in item:
+                        payload["max_output_tokens"] = item["max_tokens"]
+
+                    # Execute
+                    response = await client.post_request(payload)
+
+                    content, reasoning = _extract_responses_content(response)
+                    item["response"] = content
+                    if reasoning:
+                        item["thinking"] = reasoning
+                    item["usage"] = response.get("usage", {})
+                    item["_latency"] = round(time.perf_counter() - start_t, 3)
+                    item["_status"] = "success"
+
+                except Exception as e:
+                    logger.error(f"Worker failed for ID {item.get('id', 'unknown')}: {e}")
+                    item["_error"] = str(e)
+                    item["_status"] = "failed"
+
+                await self.output_queue.put(item)
+                self.input_queue.task_done()
+
     # ------------------------- Main Run Interface ------------------------
 
     async def run(
@@ -426,8 +519,11 @@ class OnlineBatchInferenceEngine:
             ]
             
             # Pass sampling_params explicitly to workers
+            worker_fn = (self._responses_worker
+                         if self.api_config.api_type == "responses"
+                         else self._worker)
             workers = [
-                asyncio.create_task(self._worker(client, sampling_params)) 
+                asyncio.create_task(worker_fn(client, sampling_params))
                 for _ in range(self.concurrency)
             ]
             

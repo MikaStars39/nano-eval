@@ -5,7 +5,7 @@ scan_judge.py — LLM Judge for flagged lazy training data
 Phase 2: For each flagged candidate from scan_rules.py, use an LLM judge
 to evaluate whether the training example truly contains lazy patterns.
 
-Refactored to use nano-eval's OnlineInferenceActor (Ray) for batch inference.
+Uses nano-eval's OnlineInferenceActor (Ray) for batch inference.
 """
 
 import argparse
@@ -30,77 +30,83 @@ logger = logging.getLogger(__name__)
 
 # ── Judge prompt ──────────────────────────────────────────────
 
-JUDGE_SYSTEM = """你是一个训练数据质量审核专家。你需要判断给定的训练数据是否包含"偷懒"模式——即模型在长对话后期降低输出质量、跳过步骤、编造数据、或以虚假理由简化工作的行为。
+JUDGE_SYSTEM = """你是一个训练数据质量审核专家。你需要判断给定的训练数据是否包含"偷懒"模式——即模型在长对话后期降低输出质量的行为。
 
-这些偷懒模式如果被用于训练，会教导模型在长对话中退化（Context Rot）。
+偷懒模式包括但不限于：
+- 在 reasoning/thinking 中捏造时间或 token 压力（而用户消息中无此约束）
+- 对话后期输出质量显著下降（内容量而非字数）
+- 跳过应执行的步骤
+- 用泛泛描述替代具体内容
+- 未尝试的任务被标记为"待处理"
 
-你需要对以下维度评分（0.0=无此问题, 0.5=轻微, 1.0=严重）：
-
-1. **fabricated_pressure** — reasoning/thinking 中是否捏造了时间/token压力（而用户消息中无此约束）
-2. **output_degradation** — 对话后期输出是否显著短于前期（内容量而非字数）
-3. **step_skipping** — 是否跳过了应执行的步骤
-4. **vague_generic** — 后期是否使用泛泛描述替代具体数据
-5. **task_abandonment** — 是否有未尝试的任务被标记为"待处理"
+评分标准（仅限三档）：
+- 0.0：无偷懒问题
+- 0.5：有轻微偷懒倾向
+- 1.0：严重偷懒
 
 输出格式（严格JSON，不要添加其他内容）：
 
 ```json
 {
-    "scores": {
-        "fabricated_pressure": 0.0,
-        "output_degradation": 0.0,
-        "step_skipping": 0.0,
-        "vague_generic": 0.0,
-        "task_abandonment": 0.0
-    },
-    "overall": 0.0,
+    "score": 0.0,
     "recommendation": "remove|flag|keep",
     "justification": "理由"
 }
 ```
 
 recommendation 判定标准:
-- "remove": 严重偷懒，应从训练数据中移除 (overall >= 0.7)
-- "flag": 有偷懒倾向，需人工审核 (0.3 <= overall < 0.7)
-- "keep": 无偷懒问题或极轻微 (overall < 0.3)"""
+- "remove": score = 1.0，严重偷懒，应从训练数据中移除
+- "flag": score = 0.5，有偷懒倾向，需人工审核
+- "keep": score = 0.0，无偷懒问题"""
 
 JUDGE_USER_TEMPLATE = """## 规则筛选结果
 
-以下训练样本被规则检测器标记为可能包含偷懒模式。
+匹配到的偷懒关键词: {keyword_summary}
 
-### 基本信息
-- 来源文件: {source_file}
-- 对话长度: {n_messages} 条消息 (约 {estimated_tokens} tokens)
-- 匹配到的偷懒关键词: {keyword_summary}
+## 对话内容
 
-### 早期Assistant输出（基准质量）
-{early_samples}
+{conversation}
 
-### 后期Assistant输出（疑似退化）
-{late_samples}
-
-### Reasoning/Thinking中的偷懒片段
-{reasoning_evidence}
-
-请逐项评分，判断此训练样本是否包含偷懒模式。"""
+请判断此训练样本是否包含偷懒模式。"""
 
 
 # ── Read original training data ──────────────────────────────
 
-def read_original_example(source_file: str, line_number: int) -> dict | None:
-    """Read a specific line from the original JSONL file."""
-    try:
-        with open(source_file, "r", encoding="utf-8") as f:
-            for i, line in enumerate(f, start=1):
-                if i == line_number:
-                    return json.loads(line.strip())
-    except Exception as e:
-        logger.error("Error reading %s:%d: %s", source_file, line_number, e)
-    return None
+def batch_read_original_examples(
+    flagged_items: list[dict],
+) -> dict[tuple[str, int], dict]:
+    """Read original examples in batch, grouped by source file.
+
+    Returns a mapping of (source_file, line_number) -> parsed JSON example.
+    Each file is opened at most once and scanned sequentially.
+    """
+    from collections import defaultdict
+
+    file_lines: dict[str, set[int]] = defaultdict(set)
+    for item in flagged_items:
+        file_lines[item["source_file"]].add(item["line_number"])
+
+    results: dict[tuple[str, int], dict] = {}
+    for source_file, needed in file_lines.items():
+        max_line = max(needed)
+        try:
+            with open(source_file, "r", encoding="utf-8") as f:
+                for line_no, line in enumerate(f, start=1):
+                    if line_no in needed:
+                        try:
+                            results[(source_file, line_no)] = json.loads(line.strip())
+                        except json.JSONDecodeError as e:
+                            logger.error("JSON parse error at %s:%d: %s", source_file, line_no, e)
+                    if line_no >= max_line:
+                        break
+        except Exception as e:
+            logger.error("Error reading %s: %s", source_file, e)
+
+    return results
 
 
 def extract_assistant_content(msg: dict) -> str:
-    """Extract text content from an assistant message."""
+    """Extract text content from a message."""
     content = msg.get("content") or ""
     if isinstance(content, list):
         content = " ".join(
@@ -110,105 +116,65 @@ def extract_assistant_content(msg: dict) -> str:
     return content
 
 
+def _truncate(text: str, limit: int = 3000) -> str:
+    """Truncate long text, keeping head and tail."""
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return text[:half] + "\n...[截断]...\n" + text[-half:]
+
+
 def build_judge_prompt(flagged: dict, example: dict) -> str:
     """Build the judge user prompt from flagged info and original example."""
     messages = example.get("messages", [])
 
-    # Collect assistant messages with substantial content
-    assistant_msgs = []
+    # Format full conversation
+    parts = []
     for i, msg in enumerate(messages):
-        if msg.get("role") != "assistant":
-            continue
+        role = msg.get("role", "unknown")
         content = extract_assistant_content(msg)
-        if len(content) > 50:
-            assistant_msgs.append((i, content))
+        reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
 
-    # Early samples: first 2 substantive assistant messages
-    early_samples = ""
-    for idx, (msg_idx, content) in enumerate(assistant_msgs[:2]):
-        truncated = content[:1500]
-        if len(content) > 1500:
-            truncated += "...[截断]"
-        early_samples += f"\n**[消息 #{msg_idx}] ({len(content)} 字)**\n{truncated}\n"
-    if not early_samples:
-        early_samples = "(无实质性早期输出)"
+        lines = [f"### [{role}] 消息 #{i}"]
+        if content:
+            lines.append(_truncate(content))
+        if isinstance(reasoning, str) and reasoning.strip():
+            lines.append(f"<reasoning>\n{_truncate(reasoning)}\n</reasoning>")
+        parts.append("\n".join(lines))
 
-    # Late samples: last 3 substantive assistant messages
-    late_samples = ""
-    for idx, (msg_idx, content) in enumerate(assistant_msgs[-3:]):
-        truncated = content[:1500]
-        if len(content) > 1500:
-            truncated += "...[截断]"
-        late_samples += f"\n**[消息 #{msg_idx}] ({len(content)} 字)**\n{truncated}\n"
-    if not late_samples:
-        late_samples = "(无后期输出)"
+    conversation = "\n\n".join(parts)
 
-    # Reasoning evidence from keyword hits
-    reasoning_evidence = ""
-    seen_snippets = set()
-    for hit in flagged.get("keyword_hits", [])[:5]:
-        snippet = hit.get("snippet", "")
-        if snippet and snippet not in seen_snippets:
-            seen_snippets.add(snippet)
-            reasoning_evidence += f"\n- [{hit['field']}] 关键词「{hit['keyword']}」: {snippet}\n"
-    if not reasoning_evidence:
-        reasoning_evidence = "(无reasoning证据)"
-
-    # Keyword summary
     keywords = list(set(hit["keyword"] for hit in flagged.get("keyword_hits", [])))
     keyword_summary = ", ".join(f"「{kw}」" for kw in keywords[:10])
 
     return JUDGE_USER_TEMPLATE.format(
-        source_file=os.path.basename(flagged["source_file"]),
-        n_messages=flagged["n_messages"],
-        estimated_tokens=flagged["estimated_tokens"],
         keyword_summary=keyword_summary,
-        early_samples=early_samples,
-        late_samples=late_samples,
-        reasoning_evidence=reasoning_evidence,
+        conversation=conversation,
     )
 
 
 # ── Normalize scores ──────────────────────────────────────────
 
-EXPECTED_KEYS = {
-    "fabricated_pressure", "output_degradation",
-    "step_skipping", "vague_generic", "task_abandonment",
-}
+VALID_SCORES = {0.0, 0.5, 1.0}
 
 
-def normalize_scores(result: dict) -> dict:
-    """Normalize judge response to standard format."""
-    if "scores" in result and isinstance(result["scores"], dict):
-        scores = result["scores"]
+def normalize_score(result: dict) -> dict:
+    """Normalize judge response to 3-point scale (0.0 / 0.5 / 1.0)."""
+    score = result.get("score", 0.0)
+    if isinstance(score, (int, float)):
+        score = float(score)
+        if score > 1:
+            score /= 10.0
+        # Snap to nearest valid value
+        score = min(VALID_SCORES, key=lambda v: abs(v - score))
     else:
-        scores = {}
-        for k, v in result.items():
-            if k in EXPECTED_KEYS and isinstance(v, (int, float)):
-                scores[k] = float(v) if v <= 1 else float(v) / 10.0
-        result["scores"] = scores
+        score = 0.0
 
-    for k in EXPECTED_KEYS:
-        if k not in scores:
-            scores[k] = 0.0
-        else:
-            v = scores[k]
-            if isinstance(v, (int, float)):
-                scores[k] = float(v) if v <= 1 else float(v) / 10.0
-            elif isinstance(v, dict):
-                scores[k] = float(v.get("score", v.get("value", 0)))
-                if scores[k] > 1:
-                    scores[k] /= 10.0
+    result["score"] = score
 
-    if scores:
-        result["overall"] = sum(scores.values()) / len(scores)
-    else:
-        result["overall"] = 0.0
-
-    overall = result["overall"]
-    if overall >= 0.7:
+    if score >= 1.0:
         result["recommendation"] = "remove"
-    elif overall >= 0.3:
+    elif score >= 0.5:
         result["recommendation"] = "flag"
     else:
         result["recommendation"] = "keep"
@@ -220,7 +186,7 @@ def normalize_scores(result: dict) -> dict:
 
 
 def parse_judge_response(response_text: str) -> dict:
-    """Parse judge response text, extract JSON, normalize scores."""
+    """Parse judge response text, extract JSON, normalize score."""
     content = response_text
     if "```json" in content:
         match = re.search(r"```json\s*(.*?)```", content, re.DOTALL)
@@ -233,11 +199,10 @@ def parse_judge_response(response_text: str) -> dict:
 
     try:
         result = json.loads(content)
-        return normalize_scores(result)
+        return normalize_score(result)
     except json.JSONDecodeError:
         return {
-            "scores": {k: 0.0 for k in EXPECTED_KEYS},
-            "overall": 0.0,
+            "score": 0.0,
             "recommendation": "keep",
             "justification": f"JSON parse error: {content[:200]}",
         }
@@ -246,22 +211,27 @@ def parse_judge_response(response_text: str) -> dict:
 # ── Main pipeline ──────────────────────────────────────────────
 
 def prepare_batch_input(flagged_items: list[dict], output_path: str) -> dict[str, dict]:
-    """
-    Build judge prompts for all flagged items and write to a JSONL for batch inference.
+    """Build judge prompts and write batch input JSONL for OnlineInferenceActor.
 
-    Returns a mapping from item ID to the original flagged dict (for post-processing).
+    Returns a mapping from item ID to the original flagged dict.
     """
     id_to_flagged = {}
     skipped = 0
+
+    # Prefer embedded raw_data; fall back to batch file reading
+    needs_file_read = [f for f in flagged_items if "raw_data" not in f]
+    file_examples = batch_read_original_examples(needs_file_read) if needs_file_read else {}
 
     with open(output_path, "w", encoding="utf-8") as f:
         for i, flagged in enumerate(flagged_items):
             item_id = f"scan_{i}"
 
-            # Read original example
-            example = read_original_example(flagged["source_file"], flagged["line_number"])
+            example = flagged.get("raw_data") or file_examples.get(
+                (flagged["source_file"], flagged["line_number"])
+            )
             if not example:
-                logger.warning("[%s] Could not read original file, skipping", item_id)
+                logger.warning("[%s] Could not read %s:%d, skipping",
+                               item_id, flagged["source_file"], flagged["line_number"])
                 skipped += 1
                 continue
 
@@ -323,9 +293,7 @@ def post_process_results(
                 "estimated_tokens": flagged["estimated_tokens"],
                 "n_messages": flagged["n_messages"],
                 "n_keyword_hits": flagged["n_keyword_hits"],
-                "keyword_hits": flagged["keyword_hits"][:5],
-                "judge_scores": judge_result["scores"],
-                "overall": judge_result["overall"],
+                "score": judge_result["score"],
                 "recommendation": judge_result["recommendation"],
                 "justification": judge_result.get("justification", ""),
                 "judge_model": judge_model,
@@ -387,6 +355,12 @@ async def run_batch_judge(args):
     logger.info("Starting batch inference with concurrency=%d", args.concurrency)
     init_ray(address=args.ray_address)
 
+    # Parse extra headers
+    extra_headers = {}
+    for h in args.extra_headers:
+        key, _, value = h.partition(":")
+        extra_headers[key.strip()] = value.strip()
+
     sampling_params = {
         "max_tokens": 1024,
         "temperature": 0.0,
@@ -401,6 +375,8 @@ async def run_batch_judge(args):
         base_url=args.judge_api_base,
         model=args.judge_model,
         concurrency=args.concurrency,
+        extra_headers=extra_headers or None,
+        api_type=args.api_type,
     )
     ray.get(actor.run.remote(batch_input_path, batch_output_path, sampling_params))
 
@@ -419,14 +395,18 @@ def main():
     configure_logger()
 
     parser = argparse.ArgumentParser(description="LLM Judge for flagged lazy training data")
-    parser.add_argument("--input", required=True, help="Input flagged.jsonl from scan_rules.py")
+    parser.add_argument("--input", required=True, help="Input flagged.jsonl")
     parser.add_argument("--output", required=True, help="Output judged.jsonl")
     parser.add_argument("--judge-model", required=True, help="Judge model name")
-    parser.add_argument("--judge-api-base", required=True, help="Judge API base URL")
-    parser.add_argument("--judge-api-key", required=True, help="Judge API key")
+    parser.add_argument("--judge-api-base", required=True, help="API base URL")
+    parser.add_argument("--judge-api-key", required=True, help="API key")
     parser.add_argument("--concurrency", type=int, default=16, help="Max concurrent API calls")
     parser.add_argument("--limit", type=int, default=None, help="Max items to judge")
     parser.add_argument("--ray-address", type=str, default="auto", help="Ray cluster address")
+    parser.add_argument("--api-type", type=str, default="chat", choices=["chat", "responses"],
+                        help="API type: chat (Chat Completions) or responses (Responses API)")
+    parser.add_argument("--extra-headers", nargs="*", default=[],
+                        help="Extra HTTP headers as 'Key: Value' pairs")
     args = parser.parse_args()
 
     import asyncio

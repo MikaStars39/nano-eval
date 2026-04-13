@@ -105,11 +105,15 @@ class OnlineInferenceActor:
         base_url: str,
         model: str,
         concurrency: int = 32,
+        extra_headers: Optional[Dict[str, str]] = None,
+        api_type: str = "chat",
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.concurrency = concurrency
+        self.extra_headers = extra_headers
+        self.api_type = api_type
 
     async def run(
         self,
@@ -124,6 +128,8 @@ class OnlineInferenceActor:
             api_key=self.api_key,
             base_url=self.base_url,
             model=self.model,
+            extra_headers=self.extra_headers,
+            api_type=self.api_type,
         )
         engine = OnlineBatchInferenceEngine(config, concurrency=self.concurrency)
         await engine.run(
@@ -147,6 +153,8 @@ class OnlineInferenceActor:
             api_key=self.api_key,
             base_url=self.base_url,
             model=self.model,
+            extra_headers=self.extra_headers,
+            api_type=self.api_type,
         )
         engine = OnlineBatchInferenceEngine(config, concurrency=self.concurrency)
         await engine.run_agent_loop(
