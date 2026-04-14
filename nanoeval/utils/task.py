@@ -24,17 +24,22 @@ TASK_TO_JSONL: Dict[str, str] = {
 
 
 def resolve_task_file(task_name: str, task_dir: Path) -> Path:
-    filename = TASK_TO_JSONL.get(task_name)
-    if filename is None:
-        raise ValueError(f"Unsupported task name: {task_name}")
+    filename = TASK_TO_JSONL.get(task_name, f"{task_name}.jsonl")
     return task_dir / filename
 
 
 def discover_task_names(task_dir: Path) -> List[str]:
-    available_tasks: List[str] = []
+    available_tasks: set[str] = set()
+    # 1. Check mapped tasks
     for task_name in TASK_TO_JSONL:
         if resolve_task_file(task_name=task_name, task_dir=task_dir).exists():
-            available_tasks.append(task_name)
+            available_tasks.add(task_name)
+    # 2. Auto-discover unmapped .jsonl files
+    if task_dir.exists():
+        mapped_filenames = set(TASK_TO_JSONL.values())
+        for p in task_dir.glob("*.jsonl"):
+            if p.name not in mapped_filenames:
+                available_tasks.add(p.stem)
     return sorted(available_tasks)
 
 

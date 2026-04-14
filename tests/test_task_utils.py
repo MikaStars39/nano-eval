@@ -59,7 +59,10 @@ class TestTaskUtils(unittest.TestCase):
             _write_jsonl(task_dir / "not_in_mapping.jsonl", [{"prompt": "x", "label": "y"}])
 
             discovered = discover_task_names(task_dir)
-            self.assertEqual(discovered, ["aime2024"])
+            # aime2024 is in TASK_TO_JSONL; not_in_mapping is auto-discovered from disk
+            self.assertIn("aime2024", discovered)
+            self.assertIn("not_in_mapping", discovered)
+            self.assertEqual(discovered, sorted(discovered))
 
     def test_expand_records_uses_id_as_question_id_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
