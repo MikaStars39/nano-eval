@@ -1,26 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT=/jpfs-5p/qingyu/nano-eval/
+# Required env vars:
+#   PROFILING_INPUT — path to input JSONL
+#   MODEL_PATH      — path to model
+#
+# Optional:
+#   TOKENIZER_PATH  — defaults to MODEL_PATH
+#   RAY_ADDRESS     — defaults to http://127.0.0.1:8265
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
-WORKDIR="/jpfs-5p/qingyu/data/profiling_${TIMESTAMP}"
+WORKDIR="${PROFILING_WORKDIR:-${REPO_ROOT}/outputs/profiling_${TIMESTAMP}}"
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 mkdir -p "${WORKDIR}"
 
-RUNTIME_ENV=$(cat <<'REOF'
-{"env_vars": {"PYTHONPATH": "/jpfs-5p/qingyu/nano-eval/"}}
+PROFILING_INPUT="${PROFILING_INPUT:?Set PROFILING_INPUT}"
+MODEL_PATH="${MODEL_PATH:?Set MODEL_PATH}"
+TOKENIZER_PATH="${TOKENIZER_PATH:-${MODEL_PATH}}"
+RAY_ADDRESS="${RAY_ADDRESS:-http://127.0.0.1:8265}"
+
+RUNTIME_ENV=$(cat <<REOF
+{"env_vars": {"PYTHONPATH": "${REPO_ROOT}"}}
 REOF
 )
 
 ray job submit \
-  --address "http://127.0.0.1:8265" \
+  --address "${RAY_ADDRESS}" \
   --runtime-env-json "${RUNTIME_ENV}" \
   -- python "${REPO_ROOT}/recipes/profiling/run.py" \
-  --input     "/jpfs/chenyanxu.9/data/DAPO-Math-17k-Processed/en/train-00000-of-00001.jsonl" \
+  --input     "${PROFILING_INPUT}" \
   --output-dir  "${WORKDIR}" \
   --stage       "all" \
-  --model-path  "/jpfs-5p/chenyanxu.9/model/Qwen3-8B-Base-sft-dolci-think/iter_0005375-hf" \
-  --tokenizer   "/jpfs-5p/chenyanxu.9/model/Qwen3-8B-Base-sft-dolci-think/iter_0005375-hf" \
+  --model-path  "${MODEL_PATH}" \
+  --tokenizer   "${TOKENIZER_PATH}" \
   --prompt-key  "prompt" \
   --label-key   "answer" \
   --num-examples 8 \
