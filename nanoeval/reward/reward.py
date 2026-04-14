@@ -1,5 +1,4 @@
 from typing import Dict
-from importlib import import_module
 
 # ----------------------- IMPORTANT: judge router -----------------------
 # rule-based judge router that manage the judging process
@@ -28,15 +27,6 @@ def judge_router(
         from .gpqa.gpqa_verify_reward import gpqa_judge
 
         return gpqa_judge(response, label, **kwargs)
-    elif any(key in source_lower for key in ("typos", "connections", "unscrambling")):
-        language_module = import_module("nanoeval.reward.livebench.verify_language")
-        language_judge = getattr(language_module, "language_judge")
-        return language_judge(response, label, source, **kwargs)
-    elif "tablejoin" in source_lower:
-        table_module = import_module("nanoeval.reward.livebench.verify_table")
-        table_process_results = getattr(table_module, "table_process_results")
-        prompt = kwargs.get("prompt", "")
-        return table_process_results(prompt, response, label)
     else:
         from .math.math_verify_reward import math_judge
 
