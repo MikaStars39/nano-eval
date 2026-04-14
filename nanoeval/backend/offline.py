@@ -139,8 +139,14 @@ class BatchInferenceEngine(BaseSGLangEngine):
 
     # ------------------------- Main Entry Point ------------------------
 
-    async def run(self, input_file: str, output_file: str, sampling_params: dict, resume: bool = False):
-        """Orchestrates the pipeline."""
+    async def _run_pipeline(
+        self,
+        input_file: str,
+        output_file: str,
+        resume: bool,
+        worker_tasks_factory: Callable[[], List[asyncio.Task]],
+    ):
+        """Shared pipeline: resume → workload check → producer/workers/writer → shutdown."""
         # 1. Resume Logic
         existing_ids = set()
         if resume and os.path.exists(output_file):
@@ -149,7 +155,7 @@ class BatchInferenceEngine(BaseSGLangEngine):
                 for line in f:
                     try: existing_ids.add(json.loads(line).get("id"))
                     except: pass
-        
+
         # 2. Workload Check
         total_lines = self._count_lines_fast(input_file)
         remaining = max(0, total_lines - len(existing_ids))
@@ -162,15 +168,25 @@ class BatchInferenceEngine(BaseSGLangEngine):
             asyncio.create_task(self._producer(input_file, existing_ids)),
             asyncio.create_task(self._writer(output_file, remaining, resume))
         ]
-        tasks += [asyncio.create_task(self._worker(sampling_params)) for _ in range(self.max_inflight)]
+        tasks += worker_tasks_factory()
 
         # 4. Wait
-        await tasks[0] # Wait for producer
+        await tasks[0]  # Wait for producer
         await self.input_queue.join()
-        await self.output_queue.put(None) # Stop writer
-        await tasks[1] # Wait for writer
-        
+        await self.output_queue.put(None)  # Stop writer
+        await tasks[1]  # Wait for writer
+
         logger.info(f"Done. Saved to {output_file}")
+
+    async def run(self, input_file: str, output_file: str, sampling_params: dict, resume: bool = False):
+        """Orchestrates the pipeline."""
+        await self._run_pipeline(
+            input_file, output_file, resume,
+            worker_tasks_factory=lambda: [
+                asyncio.create_task(self._worker(sampling_params))
+                for _ in range(self.max_inflight)
+            ],
+        )
 
     # ------------------------- Multi-Turn Support ------------------------
 
@@ -221,9 +237,9 @@ class BatchInferenceEngine(BaseSGLangEngine):
                 self.input_queue.task_done()
 
     async def run_multi_turn(
-        self, 
-        input_file: str, 
-        output_file: str, 
+        self,
+        input_file: str,
+        output_file: str,
         sampling_params: dict,
         turn_callback: Callable[[List[str], dict], Tuple[bool, Optional[str], dict]],
         max_turns: int = 10,
@@ -231,42 +247,16 @@ class BatchInferenceEngine(BaseSGLangEngine):
     ):
         """
         Multi-turn inference pipeline.
-        
+
         Args:
             turn_callback: (conversation_history, messages_dict) -> (should_continue, next_prompt, updated_messages)
                            Return (False, None, {}) to stop, (True, prompt, messages) to continue.
             max_turns: Maximum turns per conversation to prevent infinite loops.
         """
-        # 1. Resume Logic
-        existing_ids = set()
-        if resume and os.path.exists(output_file):
-            logger.info("Scanning output for resume...")
-            with open(output_file, "r") as f:
-                for line in f:
-                    try: existing_ids.add(json.loads(line).get("id"))
-                    except: pass
-        
-        # 2. Workload Check
-        total_lines = self._count_lines_fast(input_file)
-        remaining = max(0, total_lines - len(existing_ids))
-        if remaining == 0 and total_lines > 0:
-            logger.info("Nothing to do.")
-            return
-
-        # 3. Launch Tasks
-        tasks = [
-            asyncio.create_task(self._producer(input_file, existing_ids)),
-            asyncio.create_task(self._writer(output_file, remaining, resume))
-        ]
-        tasks += [
-            asyncio.create_task(self._multi_turn_worker(sampling_params, turn_callback, max_turns)) 
-            for _ in range(self.max_inflight)
-        ]
-
-        # 4. Wait
-        await tasks[0]  # Wait for producer
-        await self.input_queue.join()
-        await self.output_queue.put(None)  # Stop writer
-        await tasks[1]  # Wait for writer
-        
-        logger.info(f"Done. Saved to {output_file}")
+        await self._run_pipeline(
+            input_file, output_file, resume,
+            worker_tasks_factory=lambda: [
+                asyncio.create_task(self._multi_turn_worker(sampling_params, turn_callback, max_turns))
+                for _ in range(self.max_inflight)
+            ],
+        )

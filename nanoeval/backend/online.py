@@ -4,8 +4,9 @@ import json
 import time
 import os
 import sys
+import subprocess
 import logging
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set, Callable, Coroutine
 from dataclasses import dataclass
 
 # Try to import tqdm
@@ -484,53 +485,75 @@ class OnlineBatchInferenceEngine:
 
     # ------------------------- Main Run Interface ------------------------
 
-    async def run(
-        self, 
-        input_file: str, 
-        output_file: str, 
-        sampling_params: Dict[str, Any]
+    @staticmethod
+    def _count_lines(file_path: str) -> int:
+        """Counts lines using 'wc -l' with fallback."""
+        if file_path == '-' or not os.path.exists(file_path):
+            return 0
+        try:
+            res = subprocess.run(['wc', '-l', file_path], capture_output=True, text=True)
+            return int(res.stdout.split()[0])
+        except Exception:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return sum(1 for line in f if line.strip())
+
+    async def _run_pipeline(
+        self,
+        input_file: str,
+        output_file: str,
+        sampling_params: Dict[str, Any],
+        worker_factory: Callable[[AsyncClient], Coroutine],
+        log_msg: str = "",
     ):
-        """
-        Mirrors the offline engine's run signature.
-        """
+        """Shared pipeline: resume → count → producer/workers/writer → shutdown."""
         # Resume Logic
-        existing_ids = set()
+        existing_ids: Set[str] = set()
         if os.path.exists(output_file):
             with open(output_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     try: existing_ids.add(json.loads(line).get("id"))
                     except: pass
-        
-        # Count lines logic (omitted for brevity, same as before)
-        total_lines = 0
-        if input_file != '-':
-            try: total_lines = int(os.popen(f'wc -l {input_file}').read().split()[0])
-            except: pass
+
+        total_lines = self._count_lines(input_file)
         remaining = max(0, total_lines - len(existing_ids))
 
-        logger.info(f"Starting with Sampling Params: {sampling_params}")
+        logger.info(log_msg or f"Starting with Sampling Params: {sampling_params}")
 
         async with AsyncClient(self.api_config) as client:
             tasks = [
                 asyncio.create_task(self._producer(input_file, existing_ids)),
                 asyncio.create_task(self._writer(output_file, remaining if input_file != '-' else None))
             ]
-            
-            # Pass sampling_params explicitly to workers
-            worker_fn = (self._responses_worker
-                         if self.api_config.api_type == "responses"
-                         else self._worker)
+
             workers = [
-                asyncio.create_task(worker_fn(client, sampling_params))
+                asyncio.create_task(worker_factory(client))
                 for _ in range(self.concurrency)
             ]
-            
-            await tasks[0] # Wait producer
+
+            await tasks[0]  # Wait producer
             await self.input_queue.join()
-            await self.output_queue.put(None) # Stop writer
-            await tasks[1] # Wait writer
-            
+            await self.output_queue.put(None)  # Stop writer
+            await tasks[1]  # Wait writer
+
             for w in workers: w.cancel()
+
+    async def run(
+        self,
+        input_file: str,
+        output_file: str,
+        sampling_params: Dict[str, Any]
+    ):
+        """
+        Mirrors the offline engine's run signature.
+        """
+        worker_fn = (self._responses_worker
+                     if self.api_config.api_type == "responses"
+                     else self._worker)
+        await self._run_pipeline(
+            input_file, output_file, sampling_params,
+            worker_factory=lambda client: worker_fn(client, sampling_params),
+            log_msg=f"Starting with Sampling Params: {sampling_params}",
+        )
 
     async def run_agent_loop(
         self,
@@ -553,39 +576,9 @@ class OnlineBatchInferenceEngine:
         ToolResponseMatcher to find the best match for each tool call the
         model makes.
         """
-        # Resume Logic
-        existing_ids = set()
-        if os.path.exists(output_file):
-            with open(output_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    try: existing_ids.add(json.loads(line).get("id"))
-                    except: pass
-
-        total_lines = 0
-        if input_file != '-':
-            try: total_lines = int(os.popen(f'wc -l {input_file}').read().split()[0])
-            except: pass
-        remaining = max(0, total_lines - len(existing_ids))
-
-        logger.info(f"Agent loop: max_turns={max_turns}, sampling={sampling_params}")
-
-        async with AsyncClient(self.api_config) as client:
-            tasks = [
-                asyncio.create_task(self._producer(input_file, existing_ids)),
-                asyncio.create_task(self._writer(output_file, remaining if input_file != '-' else None))
-            ]
-
-            workers = [
-                asyncio.create_task(
-                    self._agent_loop_worker(client, sampling_params, max_turns)
-                )
-                for _ in range(self.concurrency)
-            ]
-
-            await tasks[0]  # Wait producer
-            await self.input_queue.join()
-            await self.output_queue.put(None)  # Stop writer
-            await tasks[1]  # Wait writer
-
-            for w in workers: w.cancel()
+        await self._run_pipeline(
+            input_file, output_file, sampling_params,
+            worker_factory=lambda client: self._agent_loop_worker(client, sampling_params, max_turns),
+            log_msg=f"Agent loop: max_turns={max_turns}, sampling={sampling_params}",
+        )
 
