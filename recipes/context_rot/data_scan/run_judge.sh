@@ -8,12 +8,10 @@ WORKDIR="${REPO_ROOT}/outputs/context_rot/judge_${TIMESTAMP}"
 mkdir -p "${WORKDIR}"
 
 python "${REPO_ROOT}/recipes/context_rot/data_scan/scan_judge.py" \
-  --input "/jfs-dialogue-mmos-rs04/users/qingyu/data/context_rot/scan_results/sampled_500_raw_context_rot_data.jsonl" \
+  --input "${SCAN_INPUT:?Set SCAN_INPUT}" \
   --output "${WORKDIR}/judged.jsonl" \
-  --judge-model "gpt-5.4-thinking-xhigh" \
-  --judge-api-base "https://talkie-ali-virginia-prod-internal.xaminim.com/llm/oai" \
-  --judge-api-key "sk-esReHZqyjoLlZwRDdloc6muhI3zoDLqRzwYoNcvT9zsBnFMI" \
-  --api-type "responses" \
-  --extra-headers "X-Biz-Id: vela-admin" \
-  --concurrency "${CONCURRENCY:-16}" \
-  --ray-address "${RAY_ADDRESS:-auto}" 2>&1 | tee "${WORKDIR}/judge.log"
+  --judge-model "${JUDGE_MODEL:-gpt-5.4-thinking-xhigh}" \
+  --judge-api-base "${JUDGE_API_BASE:?Set JUDGE_API_BASE}" \
+  --judge-api-key "${JUDGE_API_KEY:?Set JUDGE_API_KEY}" \
+  --extra-headers "${EXTRA_HEADERS:-X-Biz-Id: vela-admin}" \
+  --concurrency "${CONCURRENCY:-16}" 2>&1 | tee "${WORKDIR}/judge.log"
