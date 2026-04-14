@@ -135,7 +135,7 @@ Agent loop 输入需包含 `messages`、`tools`、`tool_responses` 字段。
 | 多选题 | `mmlu`, `mmlu_pro`, `mmlu_prox`, `ceval` |
 | 指令跟随 | `ifeval`, `ifbench` |
 
-任务注册在 `nanoeval/utils/task.py:TASK_TO_JSONL`。
+任务注册在 `nanoeval/utils/task.py:TASK_TO_JSONL`。未注册的任务名会自动 fallback 到 `{task_name}.jsonl`，无需改代码。
 
 ## 添加新评测任务
 
@@ -184,14 +184,16 @@ Please select the correct answer and put the letter in \boxed{}, e.g., \boxed{A}
 
 新的数据准备脚本放 `scripts/` 下，命名 `prepare_<task>.py`。
 
-### Step 2: 注册任务
+### Step 2: 注册任务（可选）
 
-在 `nanoeval/utils/task.py:TASK_TO_JSONL` 添加映射：
+`TASK_TO_JSONL` 字典支持别名映射（task 名与文件名不同时使用）。
+如果 JSONL 文件名就是 `{task_name}.jsonl`，无需注册——auto-discovery 会自动找到。
 
 ```python
+# 仅在 task 名和文件名不一致时需要添加
 TASK_TO_JSONL = {
     ...
-    "your_task": "your_task.jsonl",
+    "your_task": "your_task.jsonl",  # 可省略，auto-discovery 会找到
 }
 ```
 
@@ -203,7 +205,7 @@ TASK_TO_JSONL = {
 |-------------|--------|----------|
 | `ifeval` | `if_judge` | 指令遵循 |
 | `gpqa` / `mmlu` | `gpqa_judge` | 选择题 |
-| 其他（兜底） | `math_judge` | 数学题（提取数值比对） |
+| 其他（兜底） | `math_judge` | 数学题（`extract_answer` 提取 `\boxed{}` + 符号验证） |
 
 - 数学类任务：无需改动，`math_judge` 兜底即可
 - 选择题任务：source 名包含 `gpqa` 或 `mmlu` 即可，否则需在 `judge_router` 加分支
@@ -212,6 +214,44 @@ TASK_TO_JSONL = {
 ### Step 4: 上传数据
 
 将生成的 JSONL 上传到 https://huggingface.co/datasets/MikaStars39/nano-eval ，供其他用户下载使用。
+
+## 数据流字段追踪
+
+每条记录在三个阶段中依次被追加字段，原有字段全部透传。
+
+### Preprocess 追加
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | str | `{question_id}_{sample_index}`，全局唯一 |
+| `question_id` | str | 题目 ID（同题的 k 个样本共享） |
+| `source` | str | 任务名（如 `aime2024`） |
+| `sample_index` | int | 0 到 pass_k-1 |
+| `prompt` | str | 若指定 chat template 则转换后的 prompt |
+
+### Inference 追加
+
+| 字段 | 类型 | Online | Offline | 说明 |
+|------|------|--------|---------|------|
+| `response` | str | ✓ | ✓ | 模型生成内容 |
+| `thinking` | str? | ✓ | — | reasoning 字段（模型支持时） |
+| `usage` | dict | ✓ | 写前移除 | token 统计 |
+| `_latency` | float | ✓ | 写前移除 | 推理耗时（秒） |
+| `_status` | str | ✓ | ✓ | `"success"` / `"failed"` |
+| `_error` | str? | 仅失败 | 仅失败 | 错误信息 |
+| `turns` | int | agent loop | — | 对话轮数 |
+| `exit_reason` | str | agent loop | — | 退出原因 |
+
+### Score 追加
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pred` | str? | 提取的预测答案 |
+| `pass` | bool | 是否正确 |
+| `pass_at_k` | bool | 该题在 k 个样本中是否有至少 1 个正确 |
+
+> IFEval 额外追加 `instruction_count`（int）和 `instruction_pass_cnt`（int）。
+> Score 阶段会从 `response` 中提取 `<think>`/`</thinking>` 块到 `thinking` 字段。
 
 ## 输出格式
 
