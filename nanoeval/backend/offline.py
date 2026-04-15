@@ -154,7 +154,7 @@ class BatchInferenceEngine(BaseSGLangEngine):
             with open(output_file, "r") as f:
                 for line in f:
                     try: existing_ids.add(json.loads(line).get("id"))
-                    except: pass
+                    except (json.JSONDecodeError, AttributeError): pass
 
         # 2. Workload Check
         total_lines = self._count_lines_fast(input_file)

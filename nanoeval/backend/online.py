@@ -512,7 +512,7 @@ class OnlineBatchInferenceEngine:
             with open(output_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     try: existing_ids.add(json.loads(line).get("id"))
-                    except: pass
+                    except (json.JSONDecodeError, AttributeError): pass
 
         total_lines = self._count_lines(input_file)
         remaining = max(0, total_lines - len(existing_ids))

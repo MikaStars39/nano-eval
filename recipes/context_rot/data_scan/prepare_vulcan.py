@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-scan_judge.py — LLM Judge for flagged lazy training data
+prepare_vulcan.py — Prepare flagged data for Vulcan batch inference
 
-Phase 2: For each flagged candidate from scan_rules.py, use an LLM judge
-to evaluate whether the training example truly contains lazy patterns.
-
-Uses nano-eval's OnlineInferenceActor (Ray) for batch inference.
+Converts full_flagged.jsonl into sharded JSONL in Vulcan (Gemini) batch
+format. Each shard contains judge prompts wrapped in the Vulcan
+`contents` + `generationConfig` schema.
 """
 
 import argparse
