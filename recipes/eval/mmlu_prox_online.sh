@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 WORKDIR="${REPO_ROOT}/outputs/mmlu_prox_online_${TIMESTAMP}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --tasks "mmlu_prox@1" \
   --task-dir "${TASK_DIR:-/jfs-dialogue-mmos-rs04/users/qingyu/data/hf/nano-eval}" \
   --output-dir "${WORKDIR}" \

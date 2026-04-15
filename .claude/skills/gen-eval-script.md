@@ -61,11 +61,11 @@ export FLASHINFER_DISABLE_VERSION_CHECK=1
 export NLTK_DATA="${NLTK_DATA:-/mnt/llm-train/users/explore-train/qingyu/.cache}"
 
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORKDIR="${REPO_ROOT}/outputs/<RUN_NAME>_${TIMESTAMP}"
 mkdir -p "${WORKDIR}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --output-dir "${WORKDIR}" \
   --task-dir "${REPO_ROOT}/outputs/nano_eval" \
   --tasks "<TASKS>" \
@@ -92,11 +92,11 @@ export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 export NLTK_DATA="${NLTK_DATA:-/mnt/llm-train/users/explore-train/qingyu/.cache}"
 
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORKDIR="${REPO_ROOT}/outputs/<RUN_NAME>_${TIMESTAMP}"
 mkdir -p "${WORKDIR}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --output-dir "${WORKDIR}" \
   --task-dir "${REPO_ROOT}/outputs/nano_eval" \
   --tasks "<TASKS>" \
@@ -121,5 +121,5 @@ python "${REPO_ROOT}/run.py" \
 - If the user specifies `--reasoning-effort`, add it to the command.
 - Include commented-out lines for optional parameters the user didn't set (top-k, min-p, presence-penalty, repetition-penalty, agent-loop, max-turns) so the user can easily enable them later.
 - Make the script executable after writing it (`chmod +x`).
-- Always use `REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"` so the script works from any directory.
+- Always use `REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"` so the script works from any directory.
 - After generating, show the user the full script path and remind them to sync it to the GPU server for execution.

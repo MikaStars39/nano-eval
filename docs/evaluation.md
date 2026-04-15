@@ -4,7 +4,7 @@
 
 ## 三阶段流水线
 
-所有阶段通过 `run.py` 统一调度，底层使用 Ray actors（`nanoeval/ray/actors.py`）执行。
+所有阶段通过 `recipes/eval/run.py` 统一调度，底层使用 Ray actors（`nanoeval/ray/actors.py`）执行。
 
 | Stage | Ray Actor | 输入 | 输出 |
 |-------|-----------|------|------|
@@ -16,7 +16,7 @@
 
 ## CLI 参数完整参考
 
-> 以下与 `run.py` 源码一致，按分组列出。
+> 以下与 `recipes/eval/run.py` 源码一致，按分组列出。
 
 ### 数据 / 任务
 

@@ -26,7 +26,7 @@ Launch **3-4 exploration agents in parallel** (using the `Agent` tool with `suba
 **For full-repo scans**, split into:
 1. **Core modules** (`nanoeval/`) — inference engines, scoring, utilities
 2. **Recipes** (`recipes/`) — experiment scripts, task-specific code
-3. **Entry point + tests** (`run.py`, `tests/`) — argument parsing, test coverage
+3. **Entry point + tests** (`recipes/eval/run.py`, `tests/`) — argument parsing, test coverage
 4. **Cross-module consistency** — import chains, JSONL schema assumptions, function signature mismatches
 
 **For targeted scans**, split the target into logical sub-areas.

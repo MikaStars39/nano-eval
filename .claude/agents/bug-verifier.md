@@ -26,7 +26,7 @@ nanoeval/                  # Core reusable modules (inference engines, scoring, 
   ray/actors.py            # Ray actor wrappers
   ray/utils.py             # Ray init + JSONL shard/merge
 recipes/                   # Experiment scripts and task-specific code (self-contained)
-run.py                     # Main entry: Ray 3-stage pipeline (preprocess→inference→score)
+  eval/run.py              # Main entry: Ray 3-stage pipeline (preprocess→inference→score)
 ```
 
 **IMPORTANT**: recipes/ are intentionally self-contained per CLAUDE.md. Code duplication across recipes is BY DESIGN, not a bug.

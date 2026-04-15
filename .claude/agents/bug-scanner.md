@@ -25,9 +25,9 @@ nanoeval/                  # Core reusable modules (inference engines, scoring, 
   ray/actors.py            # Ray actor wrappers
   ray/utils.py             # Ray init + JSONL shard/merge
 recipes/                   # Experiment scripts and task-specific code
+  eval/run.py              # Main entry: Ray 3-stage pipeline (preprocess→inference→score)
   eval/examples/           # Standard eval examples
   context_rot/             # Context Rot evaluation toolkit
-run.py                     # Main entry: Ray 3-stage pipeline (preprocess→inference→score)
 ```
 
 ## IMPORTANT CONSTRAINTS

@@ -13,13 +13,13 @@
 
 NanoEval 是一个轻量高性能的 LLM 评测工具，采用三阶段流水线架构：**输入准备 → 推理 → 评分**，全部通过 Ray 分布式调度。
 
-详细使用指南见 [`docs/evaluation.md`](docs/evaluation.md)。
+使用指南见 [`docs/getting_started.md`](docs/getting_started.md)，参数速查和技术参考见 [`docs/evaluation.md`](docs/evaluation.md)。
 
 ## Quick Start
 
 ```bash
 # Online 后端
-python run.py \
+python recipes/eval/run.py \
   --output-dir outputs/my_eval \
   --task-dir outputs/nano_eval \
   --tasks "gpqa_diamond@4,math500@1,aime2025@8,ifeval@1" \
@@ -33,13 +33,13 @@ python run.py \
   --num-actors 4
 
 # Offline 后端（本地 SGLang）
-python run.py --output-dir outputs/my_eval --backend offline \
+python recipes/eval/run.py --output-dir outputs/my_eval --backend offline \
   --model-path /path/to/model --tp-size 8 --num-actors 4 ...
 
 # 单独运行各阶段
-python run.py --output-dir ./out --stage preprocess --backend offline ...
-python run.py --output-dir ./out --stage inference --backend offline ...
-python run.py --output-dir ./out --stage score --backend offline ...
+python recipes/eval/run.py --output-dir ./out --stage preprocess --backend offline ...
+python recipes/eval/run.py --output-dir ./out --stage inference --backend offline ...
+python recipes/eval/run.py --output-dir ./out --stage score --backend offline ...
 ```
 
 ## Supported Tasks
@@ -58,13 +58,13 @@ python run.py --output-dir ./out --stage score --backend offline ...
 ## Project Structure
 
 ```
-run.py                     # 主入口（Ray 编排）
 nanoeval/
   backend/                 # 推理后端（offline SGLang / online API）
   reward/                  # 评分器（math / ifeval / gpqa / mmlu）
   ray/                     # Ray 分布式 actor 封装
   utils/                   # CLI 参数、任务加载、日志
 recipes/                   # 实验脚本
+  eval/run.py              # 评测主入口（Ray 编排）
   eval/examples/           # 标准评测示例
   context_rot/             # Context Rot 长对话退化评测
 docs/                      # 文档

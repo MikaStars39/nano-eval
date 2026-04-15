@@ -3,11 +3,11 @@ set -euo pipefail
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 WORKDIR="${REPO_ROOT}/outputs/offline_${TIMESTAMP}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --tasks "ifeval@1" \
   --task-dir "${REPO_ROOT}/outputs/nano_eval" \
   --output-dir "${WORKDIR}" \

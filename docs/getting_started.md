@@ -21,6 +21,7 @@ NanoEval 采用 **三阶段 Ray 流水线**，每个阶段由独立的 Ray Actor
 
 ```
                   ┌──────────────┐
+                  │ recipes/eval/ │
                   │   run.py     │  统一入口
                   └──────┬───────┘
                          │
@@ -125,7 +126,7 @@ NanoEval 使用 Ray 编排所有阶段。两种用法：
 
 ```bash
 # 直接跑，不需要额外操作
-python run.py --backend online --ray-address auto ...
+python recipes/eval/run.py --backend online --ray-address auto ...
 ```
 
 ### 多机模式
@@ -146,7 +147,7 @@ ray status
 然后在评测命令中指定：
 
 ```bash
-python run.py --ray-address "主节点IP:6379" ...
+python recipes/eval/run.py --ray-address "主节点IP:6379" ...
 ```
 
 > **Tip:** 单机多卡场景不需要手动启 Ray，`--ray-address auto` 即可。只有跨机器并行时才需要手动组集群。
@@ -160,7 +161,7 @@ python run.py --ray-address "主节点IP:6379" ...
 ### 最小示例
 
 ```bash
-python run.py \
+python recipes/eval/run.py \
   --output-dir ./out/my_eval \
   --backend online \
   --api-key "$API_KEY" \
@@ -175,7 +176,7 @@ python run.py \
 ### 完整示例（多任务 + 思考模式）
 
 ```bash
-python run.py \
+python recipes/eval/run.py \
   --output-dir ./out/my_eval \
   --backend online \
   --api-key "$API_KEY" \
@@ -207,11 +208,11 @@ python run.py \
 set -euo pipefail
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 WORKDIR="${REPO_ROOT}/outputs/online_${TIMESTAMP}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --tasks "gpqa_diamond@4,math500@1,aime2025@8,ifeval@1" \
   --task-dir "${REPO_ROOT}/outputs/nano_eval" \
   --output-dir "${WORKDIR}" \
@@ -239,7 +240,7 @@ python "${REPO_ROOT}/run.py" \
 ### 最小示例
 
 ```bash
-python run.py \
+python recipes/eval/run.py \
   --output-dir ./out/my_eval \
   --backend offline \
   --model-path /path/to/model \
@@ -254,7 +255,7 @@ python run.py \
 ### 完整示例（思考模式 + 大 token）
 
 ```bash
-python run.py \
+python recipes/eval/run.py \
   --output-dir ./out/my_eval \
   --backend offline \
   --model-path /path/to/Qwen3-8B \
@@ -299,11 +300,11 @@ set -euo pipefail
 export RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
 WORKDIR="${REPO_ROOT}/outputs/offline_${TIMESTAMP}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --tasks "ifeval@1" \
   --task-dir "${REPO_ROOT}/outputs/nano_eval" \
   --output-dir "${WORKDIR}" \
@@ -473,7 +474,7 @@ head -1 output-dir/score.jsonl | python -m json.tool
 
 ```bash
 # 从 inference 阶段恢复，跳过已完成的样本
-python run.py \
+python recipes/eval/run.py \
   --output-dir ./out/my_eval \
   --backend online \
   --stage inference \
@@ -484,7 +485,7 @@ python run.py \
 然后单独跑 score：
 
 ```bash
-python run.py \
+python recipes/eval/run.py \
   --output-dir ./out/my_eval \
   --backend online \
   --stage score \
@@ -497,7 +498,7 @@ python run.py \
 用 `--max-examples` 限制每个任务只跑几条，快速验证流程是否正确：
 
 ```bash
-python run.py \
+python recipes/eval/run.py \
   --max-examples 5 \
   --tasks "aime2025@1" \
   ...
@@ -508,7 +509,7 @@ python run.py \
 仅 Online 后端支持。输入 JSONL 需要包含 `messages`、`tools`、`tool_responses` 字段：
 
 ```bash
-python run.py \
+python recipes/eval/run.py \
   --backend online \
   --agent-loop \
   --max-turns 10 \
@@ -534,8 +535,8 @@ python run.py \
 
 ```bash
 # Online：通过内部键注入到 API 请求的 system message
-python run.py --backend online --system-prompt "你是一个数学助手" ...
+python recipes/eval/run.py --backend online --system-prompt "你是一个数学助手" ...
 
 # Offline：在 preprocess 阶段通过 chat template 注入
-python run.py --backend offline --system-prompt "你是一个数学助手" ...
+python recipes/eval/run.py --backend offline --system-prompt "你是一个数学助手" ...
 ```

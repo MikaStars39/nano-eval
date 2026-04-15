@@ -8,7 +8,7 @@ TIMESTAMP=$(date +%Y%m%d%H%M%S)
 WORKDIR="${REPO_ROOT}/outputs/iter_0000127_qwen3_8b_rl_onpolicy_offline_${TIMESTAMP}"
 mkdir -p "${WORKDIR}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --output-dir "${WORKDIR}" \
   --task-dir "/jpfs/chenyanxu.9/data/nano-eval" \
   --tasks "aime2024@32,aime2025@32,math500@4,gpqa_diamond@4" \

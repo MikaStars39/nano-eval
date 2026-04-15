@@ -10,7 +10,7 @@ BASE_URL="https://api.minimaxi.com/v1"
 
 mkdir -p "${WORKDIR}"
 
-python "${REPO_ROOT}/run.py" \
+python "${REPO_ROOT}/recipes/eval/run.py" \
   --tasks "mmmlu@1" \
   --task-dir "${TASK_DIR:-/jfs-dialogue-mmos-rs04/users/qingyu/data/hf/nano-eval}" \
   --output-dir "${WORKDIR}" \
